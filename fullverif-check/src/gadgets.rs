@@ -2,7 +2,7 @@
 
 use crate::error::{CompError, CompErrorKind};
 use crate::netlist::{self, GadgetProp, GadgetStrat, WireAttrs};
-use std::collections::HashMap;
+use fnv::FnvHashMap as HashMap;
 use yosys_netlist_json as yosys;
 
 /// Time unit, in clock cycles
@@ -84,15 +84,17 @@ fn module2gadget<'a>(
         name: name.into(),
         module,
         clock: None,
-        inputs: HashMap::new(),
-        outputs: HashMap::new(),
-        randoms: HashMap::new(),
+        inputs: HashMap::default(),
+        outputs: HashMap::default(),
+        randoms: HashMap::default(),
         prop,
         strat,
         order,
     };
     // Classify ports of the gadgets.
-    for (port_name, port) in module.ports.iter() {
+    let mut module_ports: Vec<_> = module.ports.iter().collect();
+    module_ports.sort_unstable_by_key(|&(name, _port)| name);
+    for (port_name, port) in module_ports {
         match (netlist::net_attributes(module, port_name)?, port.direction) {
             (WireAttrs::Sharing { latencies, count }, dir @ yosys::PortDirection::Input)
             | (WireAttrs::Sharing { latencies, count }, dir @ yosys::PortDirection::Output) => {
@@ -173,9 +175,9 @@ fn module2gadget<'a>(
 pub fn netlist2gadgets<'a>(
     netlist: &'a yosys::Netlist,
 ) -> Result<HashMap<GKind<'a>, Gadget<'a>>, CompError<'a>> {
-    let res = netlist
-        .modules
-        .iter()
+    let mut netlist_modules: Vec<_> = netlist.modules.iter().collect();
+    netlist_modules.sort_unstable_by_key(|&(name, _module)| name);
+    let res = netlist_modules.into_iter()
         .filter_map(|(module_name, module)| {
             (|| {
                 Ok(module2gadget(module, module_name)?

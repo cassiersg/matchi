@@ -3,7 +3,7 @@ use crate::gadget_internals::GadgetInternals;
 use crate::gadgets::Latency;
 use crate::utils::format_set;
 
-use std::collections::HashMap;
+use fnv::FnvHashMap as HashMap;
 use std::fs::File;
 use std::io::{prelude::*, BufReader};
 
@@ -17,6 +17,7 @@ extern crate derivative;
 mod clk_vcd;
 mod comp_prop;
 mod config;
+mod deep_verif;
 mod error;
 mod gadget_internals;
 mod gadgets;
@@ -33,7 +34,7 @@ fn abstract_rnd_timings<'a>(
     let mut res = Vec::new();
     for (rnd, lat) in rnd_timings {
         if res.len() <= *lat as usize {
-            res.resize(*lat as usize + 1, HashMap::new());
+            res.resize(*lat as usize + 1, HashMap::default());
         }
         res[*lat as usize]
             .entry(rnd.port_name)
@@ -91,6 +92,30 @@ fn check_gadget<'a, 'b>(
                 println!("state cleared");
             }
             let _cg = ugg.computation_graph(ugg.annotate_sensitive());
+            // Return None as there is no sub-gadget to check (we don't accept sub-gadgets in isolate strategy).
+            Ok(None)
+        }
+        netlist::GadgetStrat::DeepVerif => {
+            println!("Checking gadget {} (deep verif)...", gadget_name);
+            if gadget.prop == netlist::GadgetProp::Affine {
+                Err(CompError::ref_nw(
+                    gadget.module,
+                    CompErrorKind::Other(
+                        "Invalid strategy 'deep_verif' for non-affine gadget".to_owned(),
+                    ),
+                ))?;
+            }
+            let gg = raw_internals::GadgetGates::from_gadget(gadget)?;
+            let ugg = gg.unroll(controls)?;
+            ugg.check_outputs_valid(ugg.annotate_valid())?;
+            println!("outputs valid");
+            if config.check_state_cleared {
+                ugg.check_state_cleared(ugg.annotate_sensitive())?;
+                println!("state cleared");
+            }
+            let cg = ugg.computation_graph(ugg.annotate_sensitive());
+            deep_verif::check_deep_verif(&cg, gadget)?;
+            // Return None as there is no sub-gadget to check (we don't accept sub-gadgets in deep_verif strategy).
             Ok(None)
         }
         netlist::GadgetStrat::CompositeProp => {
@@ -267,8 +292,9 @@ fn check_gadget_top<'a>(
         let controls = controls.submodule((*name.get()).to_owned(), cycle as usize);
         gadgets_to_check.push((gadget_name, controls));
     }
-    let mut gadgets_checked: HashMap<gadgets::GKind, Vec<clk_vcd::StateLookups>> = HashMap::new();
+    let mut gadgets_checked: HashMap<gadgets::GKind, Vec<clk_vcd::StateLookups>> = HashMap::default();
     while let Some((sg_name, mut sg_controls)) = gadgets_to_check.pop() {
+        // Check if one of our state lookups matches the current state.
         let mut gadget_ok = false;
         for state_lookups in gadgets_checked.get(&sg_name).unwrap_or(&Vec::new()) {
             if state_lookups.iter().all(|((path, cycle, idx), state)| {
@@ -283,7 +309,10 @@ fn check_gadget_top<'a>(
             continue;
         }
 
+        // Actual verification of the gadget.
         let ur_sg = check_gadget(&gadgets, sg_name, true, &mut sg_controls, config)?;
+
+        // Add sub-gadgest to "to be checked" list.
         if let Some(ur_sg) = ur_sg {
             // FIXME Should also check "only glitch" gadgets
             for ((name, cycle), base) in ur_sg.sensitive_stable_gadgets() {
@@ -293,6 +322,8 @@ fn check_gadget_top<'a>(
                 ));
             }
         }
+
+        // Cache verification result.
         gadgets_checked
             .entry(sg_name.to_owned())
             .or_insert_with(Vec::new)

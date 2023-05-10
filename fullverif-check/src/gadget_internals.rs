@@ -3,7 +3,8 @@
 
 use crate::error::{CResult, CompError, CompErrorKind, CompErrors, DBitVal};
 use crate::gadgets::{Gadget, Gadgets, Random, Sharing};
-use std::collections::{hash_map, HashMap};
+use std::collections::{hash_map};
+use fnv::FnvHashMap as HashMap;
 use yosys_netlist_json as yosys;
 
 pub enum GInst {}
@@ -122,9 +123,11 @@ impl<'a, 'b> GadgetInternals<'a, 'b> {
     /// Build internals from the module associated to the gadget
     pub fn from_module(gadget: &'b Gadget<'a>, lib_gadgets: &'b Gadgets<'a>) -> CResult<'a, Self> {
         // List subgadgets.
-        let mut subgadgets = HashMap::<GName<'a>, GadgetInstance<'a, 'b>>::new();
+        let mut subgadgets = HashMap::<GName<'a>, GadgetInstance<'a, 'b>>::default();
         let (rnd_gates, rnd_map) = module2randoms(gadget, lib_gadgets)?;
-        for (cell_name, cell) in gadget.module.cells.iter() {
+        let mut module_cells: Vec<_> = gadget.module.cells.iter().collect();
+        module_cells.sort_unstable_by_key(|&(name, _cell)| name);
+        for (cell_name, cell) in module_cells {
             if let Some(sg) = lib_gadgets.get(&cell.cell_type.as_str().into()) {
                 if sg.order != gadget.order {
                     Err(CompError::ref_nw(
@@ -145,7 +148,7 @@ impl<'a, 'b> GadgetInternals<'a, 'b> {
                     cell_name.as_str().into(),
                     GadgetInstance {
                         kind: sg,
-                        input_connections: HashMap::new(),
+                        input_connections: HashMap::default(),
                         random_connections,
                     },
                 );
@@ -167,7 +170,7 @@ impl<'a, 'b> GadgetInternals<'a, 'b> {
                 )
             })
         });
-        let mut sharings = HashMap::new();
+        let mut sharings = HashMap::default();
         for sharing in input_sharings_iter.chain(sg_output_sharings_iter) {
             let (bits, sharing) = sharing;
             if let hash_map::Entry::Vacant(entry) = sharings.entry(bits) {
@@ -207,7 +210,7 @@ impl<'a, 'b> GadgetInternals<'a, 'b> {
             }
         }
         // Connect output connections of the gadget
-        let mut output_connections = HashMap::new();
+        let mut output_connections = HashMap::default();
         for output_name in gadget.outputs.keys() {
             let bits = get_port_bits(output_name, gadget.module, gadget.order);
             let sharing = sharings.get(bits).ok_or_else(|| {
@@ -234,7 +237,7 @@ impl<'a, 'b> GadgetInternals<'a, 'b> {
         let gadget = self.gadget;
         // List wires that carry a share, that is, wires that are an output of a sub-gadget or
         // belong to an input sharing.
-        let mut sharings: HashMap<&[yosys::BitVal], Connection> = HashMap::new();
+        let mut sharings: HashMap<&[yosys::BitVal], Connection> = HashMap::default();
         for (sg_name, sgi) in self.subgadgets.iter() {
             for output_name in sgi.kind.outputs.keys() {
                 sharings.insert(
@@ -323,7 +326,7 @@ fn module2randoms<'a>(
         })
         .collect();
     let mut to_explore: Vec<&yosys::BitVal> = wires2rnds.keys().cloned().collect();
-    let mut rnd_gates: HashMap<RndGateId, RndGate> = HashMap::new();
+    let mut rnd_gates: HashMap<RndGateId, RndGate> = HashMap::default();
     // The explore recursively the gates connected to the randomness containing wires
     let bit_uses: HashMap<yosys::BitVal, Vec<_>> = list_wire_uses(gadget.module);
     let clock_bitval = gadget
@@ -473,8 +476,12 @@ fn get_connection_bits<'a>(
 pub fn list_wire_uses<'a>(
     module: &'a yosys::Module,
 ) -> HashMap<yosys::BitVal, Vec<(&'a str, &'a str, u32)>> {
-    let mut res = HashMap::new();
-    for (cell_name, cell) in module.cells.iter() {
+    let mut res = HashMap::default();
+    let mut module_cells: Vec<_> = module.cells.iter().collect();
+    module_cells.sort_unstable_by_key(|&(name, _cell)| name);
+    for (cell_name, cell) in module_cells {
+        let mut cell_collections: Vec<_> = cell.connections.iter().collect();
+        cell_collections.sort_unstable_by_key(|&(name, _connection)| name);
         for (conn, bits) in cell.connections.iter() {
             if cell.port_directions[conn] == yosys::PortDirection::Input {
                 for (offset, bit) in bits.iter().enumerate() {

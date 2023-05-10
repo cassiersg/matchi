@@ -12,7 +12,8 @@ use petgraph::{
     visit::{EdgeRef, IntoNodeIdentifiers, IntoNodeReferences},
     Direction, Graph,
 };
-use std::collections::{hash_map, BTreeSet, HashMap};
+use std::collections::{hash_map, BTreeSet};
+use fnv::FnvHashMap as HashMap;
 use yosys_netlist_json as yosys;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -240,34 +241,35 @@ impl<'a: 'b, 'b> UnrolledGates<'a, 'b> {
         }
         return res;
     }
-    pub fn computation_graph(&self, sensitive: Vec<bool>) -> LeakComputationGraph {
-        let mut max_eprobes = Vec::<Vec<NodeIndex>>::new();
-        let mut outputs = HashMap::new();
-        for (node, gate) in self.tgates.node_references() {
-            if sensitive[node.index()] {
-                let no_childs = self
+    pub fn computation_graph(&self, sensitive: Vec<bool>) -> LeakComputationGraph<'a> {
+        let mut max_eprobes_internal = Vec::<Vec<NodeIndex>>::new();
+        let mut max_eprobes_output = Vec::<Vec<NodeIndex>>::new();
+        let mut outputs = Vec::new();
+        for (node, _gate) in self.tgates.node_references() {
+            if sensitive[dbg!(node.index())] {
+                // Is only used as input of regs -> won't be extended more,
+                // let's put a probe on it.
+                let only_reg_uses = self
                     .tgates
                     .neighbors_directed(node, Direction::Outgoing)
-                    .next()
-                    .is_none();
-                let is_reg = if let &(GNode::Gate(RawGate::Reg, _), _) = gate {
-                    true
-                } else {
-                    false
-                };
+                    .all(|n| !matches!(self.tgates[n].0, GNode::Gate(RawGate::Reg, _)));
                 let is_output = if let Some(share) = self.outputs.get(&node) {
-                    outputs.insert(*share, max_eprobes.len());
+                    outputs.push(*share);
                     true
                 } else {
                     false
                 };
-                if is_output || no_childs || is_reg {
-                    max_eprobes.push(self.extend_probe(node));
+                dbg!((is_output, only_reg_uses));
+                // TODO handle transitions
+                if is_output {
+                    max_eprobes_output.push(self.extend_probe(node));
+                } else if only_reg_uses {
+                    max_eprobes_internal.push(self.extend_probe(node));
                 }
             }
         }
         let mut used_gates = vec![false; self.tgates.node_count()];
-        for probe in max_eprobes.iter().flat_map(|p| p.iter()) {
+        for probe in max_eprobes_internal.iter().chain(max_eprobes_output.iter()).flat_map(|p| p.iter()) {
             used_gates[probe.index()] = true;
         }
         let sorted_tgates = petgraph::algo::toposort(&self.tgates, None).unwrap();
@@ -322,18 +324,35 @@ impl<'a: 'b, 'b> UnrolledGates<'a, 'b> {
                 }
             }
         }
-        let e_probes = max_eprobes
+        let mut outputs_map = HashMap::default();
+        let mut e_probes_output = Vec::new();
+        for (output, ep) in outputs.into_iter().zip(max_eprobes_output.into_iter()) {
+            let ep = ep.iter()
+                    .map(|p| mapped_gates[p.index()].unwrap())
+                    .collect::<BTreeSet<_>>();
+            if let Some(pos) = e_probes_output.iter().position(|p| &ep == p) {
+                outputs_map.insert(output, pos);
+            } else {
+                outputs_map.insert(output, e_probes_output.len());
+                e_probes_output.push(ep);
+            }
+        }
+        let e_probes_output_set = e_probes_output.iter().collect::<BTreeSet<_>>();
+        let e_probes_internal = max_eprobes_internal
             .iter()
             .map(|ep| {
                 ep.iter()
                     .map(|p| mapped_gates[p.index()].unwrap())
                     .collect::<BTreeSet<_>>()
             })
-            .collect::<Vec<_>>();
+            .filter(|ep| !e_probes_output_set.contains(ep))
+            .collect::<BTreeSet<_>>();
+        let e_probes_internal = e_probes_internal.into_iter().collect::<Vec<_>>();
         return LeakComputationGraph {
             cg,
-            e_probes,
-            outputs,
+            e_probes_output,
+            e_probes_internal,
+            outputs_map,
             n_shares: self.gadget.gadget.order,
         };
     }
@@ -342,8 +361,8 @@ impl<'a: 'b, 'b> UnrolledGates<'a, 'b> {
 impl<'a, 'b> GadgetGates<'a, 'b> {
     pub fn from_gadget(gadget: &'b Gadget<'a>) -> Result<Self, CompError<'a>> {
         let mut gates = petgraph::Graph::new();
-        let mut wires = HashMap::new();
-        let mut gate_names = HashMap::new();
+        let mut wires = HashMap::default();
+        let mut gate_names = HashMap::default();
         for rnd in gadget.randoms.keys() {
             let node = gates.add_node(GNode::Input(GadgetInput::Random(rnd.clone())));
             wires.insert(
@@ -486,7 +505,7 @@ impl<'a, 'b> GadgetGates<'a, 'b> {
         let n_cycles = self.gadget.max_output_lat() + 1;
         let sorted_nodes = self.sort_nodes()?;
         let mut res = Graph::new();
-        let mut new_nodes: HashMap<(NodeIndex, Latency), NodeIndex> = HashMap::new();
+        let mut new_nodes: HashMap<(NodeIndex, Latency), NodeIndex> = HashMap::default();
         for cycle in 0..n_cycles {
             for node in sorted_nodes.iter() {
                 match self.gates[*node] {
@@ -559,6 +578,7 @@ impl<'a, 'b> GadgetGates<'a, 'b> {
                 (0..self.gadget.order).map(move |i| {
                     let o_bitval = self.gadget.module.ports[output.port_name].bits
                         [(self.gadget.order * output.pos + i) as usize];
+
                     (
                         gates2timed[&(self.wires[&o_bitval], *lat)],
                         Share {
@@ -609,7 +629,7 @@ impl<'a, 'b> GadgetGates<'a, 'b> {
         for e in self.gates.raw_edges().iter() {
             // Drop input edges of regs: they come from the past, therefore to not model a
             // combinational dependency.
-            if let GNode::Gate(RawGate::Reg, _) = self.gates[e.source()] {
+            if let GNode::Gate(RawGate::Reg, _) = self.gates[e.target()] {
             } else {
                 g.add_edge(e.source(), e.target(), e.weight.clone());
             }
@@ -648,7 +668,10 @@ pub enum CGNode<'a> {
 #[derive(Debug, Clone)]
 pub struct LeakComputationGraph<'a> {
     cg: Graph<CGNode<'a>, ()>,
-    e_probes: Vec<BTreeSet<NodeIndex>>,
-    outputs: HashMap<Share<'a>, usize>,
+    e_probes_output: Vec<BTreeSet<NodeIndex>>,
+    e_probes_internal: Vec<BTreeSet<NodeIndex>>,
+    // Map from output shares to index in the e_probes_output vector, as the
+    // corresponding exended probe.
+    outputs_map: HashMap<Share<'a>, usize>,
     n_shares: u32,
 }

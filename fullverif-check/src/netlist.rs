@@ -190,6 +190,7 @@ pub enum GadgetStrat {
     Assumed,
     CompositeProp,
     Isolate,
+    DeepVerif,
 }
 
 /// Get values for the latency annotation of a port.
@@ -355,6 +356,7 @@ pub fn module_strat<'a>(module: &'a yosys::Module) -> Result<GadgetStrat, CompEr
         yosys::AttributeVal::S(attr) if attr == "assumed" => Ok(GadgetStrat::Assumed),
         yosys::AttributeVal::S(attr) if attr == "composite" => Ok(GadgetStrat::CompositeProp),
         yosys::AttributeVal::S(attr) if attr == "isolate" => Ok(GadgetStrat::Isolate),
+        yosys::AttributeVal::S(attr) if attr == "deep_verif" => Ok(GadgetStrat::DeepVerif),
         attr => Err(CompError::ref_nw(
             module,
             CompErrorKind::WrongAnnotation("fv_strat".to_owned(), attr.clone()),
@@ -385,13 +387,15 @@ pub fn get_names(
     module: &yosys::Module,
     net: yosys::BitVal,
 ) -> impl Iterator<Item = (&str, usize)> {
-    module.netnames.iter().flat_map(move |(name, netname)| {
+    let mut netnames : Vec<_> = module.netnames.iter().flat_map(move |(name, netname)| {
         netname
             .bits
             .iter()
             .positions(move |bitval| *bitval == net)
             .map(move |i| (name.as_str(), i))
-    })
+    }).collect();
+    netnames.sort_unstable();
+    netnames.into_iter()
 }
 
 /// Handling Yosys formatting: names starting with '$' are prefixed with '\' in vcd but not

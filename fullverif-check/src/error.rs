@@ -13,7 +13,7 @@ use crate::gadgets::{self, Latency};
 use crate::netlist;
 use crate::tg_graph;
 use crate::utils::format_set;
-use std::collections::HashMap;
+use fnv::FnvHashMap as HashMap;
 use yosys_netlist_json as yosys;
 
 pub type CResult<'a, T> = Result<T, CompErrors<'a>>;
@@ -94,7 +94,7 @@ pub enum CompErrorKind<'a> {
     Vcd,
 }
 
-pub struct ASrc<'a>(pub &'a HashMap<String, yosys::AttributeVal>);
+pub struct ASrc<'a>(pub &'a std::collections::HashMap<String, yosys::AttributeVal>);
 impl<'a> fmt::Display for ASrc<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.0.get("src") {
@@ -326,11 +326,11 @@ impl<'a> fmt::Display for CompError<'a> {
             CompErrorKind::ExcedentaryOutput(outputs) => {
                 writeln!(f, "The following outputs are sensitive (although annotation specifies they should not be valid):")?;
                 // Map { cycle -> Map { sharing_port_name -> (Option(correct latency), List { sharing_offset }) } }
-                let mut exc_outputs: HashMap<u32, HashMap<&str, (Option<Latency>, Vec<u32>)>> = HashMap::new();
+                let mut exc_outputs: HashMap<u32, HashMap<&str, (Option<Latency>, Vec<u32>)>> = HashMap::default();
                 for (sharing, cycle, expected_lat) in outputs {
                     exc_outputs
                         .entry(*cycle)
-                        .or_insert_with(HashMap::new)
+                        .or_insert_with(HashMap::default)
                         .entry(sharing.port_name)
                         .or_insert_with(|| (*expected_lat, Vec::new()))
                         .1
@@ -346,7 +346,7 @@ impl<'a> fmt::Display for CompError<'a> {
                     })
                     .collect();
                 // Map { Vec { (sharing_port_name, Option(expected_lat), List { sharing_offset }) } -> List { cycle } }
-                let mut exc_outputs_rev: HashMap<&Vec<(&str, Option<Latency>, Vec<u32>)>, Vec<u32>> = HashMap::new();
+                let mut exc_outputs_rev: HashMap<&Vec<(&str, Option<Latency>, Vec<u32>)>, Vec<u32>> = HashMap::default();
                 for (cycle, map) in exc_outputs.iter() {
                     exc_outputs_rev
                         .entry(map)

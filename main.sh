@@ -31,8 +31,8 @@ IV=$(which iverilog)
 VVP=$(which vvp)
 YOSYS_BIN=$(which yosys)
 # Change only if you did not install fullverif from sources or if you moved this script.
-#FULL_VERIF=$SCRIPTPATH/fullverif-check/target/debug/fullverif
-FULL_VERIF=$SCRIPTPATH/fullverif-check/target/release/fullverif
+FULL_VERIF=$SCRIPTPATH/fullverif-check/target/debug/fullverif
+#FULL_VERIF=$SCRIPTPATH/fullverif-check/target/release/fullverif
 export FULLVERIF_LIB_DIR=$SCRIPTPATH/lib_v
 
 ## Where to put synthesis and simulation results

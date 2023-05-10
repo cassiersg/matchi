@@ -1,6 +1,6 @@
 use crate::error::{CompError, CompErrorKind};
 use crate::gadgets::Gadget;
-use std::collections::HashMap;
+use fnv::FnvHashMap as HashMap;
 use yosys_netlist_json as yosys;
 
 /// Verify that the gadget is a trivial implementation of an affine function.
@@ -8,7 +8,7 @@ use yosys_netlist_json as yosys;
 /// care of on share of the input sharings ("circuit share"/"DOM" isolation).
 pub fn check_inner_affine<'a>(gadget: &Gadget<'a>) -> Result<(), CompError<'a>> {
     let mut wires_as_cell_inputs: HashMap<yosys::BitVal, Vec<(&yosys::Cell, &str, u32)>> =
-        HashMap::new();
+        HashMap::default();
     for cell in gadget.module.cells.values() {
         for (port, bitvals) in cell.connections.iter() {
             for (i, bitval) in bitvals.iter().enumerate() {
@@ -19,7 +19,7 @@ pub fn check_inner_affine<'a>(gadget: &Gadget<'a>) -> Result<(), CompError<'a>> 
             }
         }
     }
-    let mut tagged_wires: HashMap<yosys::BitVal, u32> = HashMap::new();
+    let mut tagged_wires: HashMap<yosys::BitVal, u32> = HashMap::default();
     let mut wires_to_analyze: Vec<yosys::BitVal> = Vec::new();
     for input in gadget.inputs.keys() {
         for (i, bv) in gadget.sharing_bits(*input).iter().enumerate() {

@@ -2,7 +2,7 @@
 
 use crate::error::{CompError, CompErrorKind};
 use std::borrow::Borrow;
-use std::collections::HashMap;
+use fnv::FnvHashMap as HashMap;
 
 /// State of a circuit at one clock cycle.
 pub type State = HashMap<vcd::IdCode, VarState>;
@@ -48,7 +48,7 @@ impl CacheNameIds {
     fn new(id: usize) -> Self {
         Self {
             id,
-            scopes: HashMap::new(),
+            scopes: HashMap::default(),
         }
     }
 }
@@ -206,7 +206,7 @@ impl<'a> ModuleControls<'a> {
             vcd_states,
             offset,
             root_module,
-            accessed: HashMap::new(),
+            accessed: HashMap::default(),
         }
     }
 
@@ -245,7 +245,7 @@ impl<'a> ModuleControls<'a> {
             vcd_states: self.vcd_states,
             offset: self.offset + time_offset,
             root_module: path,
-            accessed: StateLookups::new(),
+            accessed: StateLookups::default(),
         }
     }
 
@@ -354,7 +354,7 @@ fn clocked_states<'a>(
 
 /// List the variables in the vcd.
 fn list_vars(header: &vcd::Header) -> HashMap<vcd::IdCode, vcd::Var> {
-    let mut res = HashMap::new();
+    let mut res = HashMap::default();
     let mut remaining_items = header.items.iter().collect::<Vec<_>>();
     while let Some(scope_item) = remaining_items.pop() {
         match scope_item {

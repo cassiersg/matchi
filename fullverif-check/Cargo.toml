@@ -15,6 +15,7 @@ clap = "2.33"
 phantom_newtype = "0.2"
 derivative =  "2.2"
 derive_more = "0.99"
+fnv = "1.0.7"
 
 #flame = { version = "0.2.2", optional = true }
 #flamer = { version = "0.3", optional = true }

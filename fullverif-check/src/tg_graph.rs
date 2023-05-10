@@ -10,7 +10,9 @@ use petgraph::{
     visit::{EdgeFiltered, EdgeRef, IntoNodeIdentifiers},
     Direction, Graph,
 };
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::BinaryHeap;
+use fnv::FnvHashMap as HashMap;
+use fnv::FnvHashSet as HashSet;
 
 /// A gadget id in the GadgetFlow
 pub type Name<'a> = (GName<'a>, Latency);
@@ -111,7 +113,7 @@ where
     'a: 'b,
     'b: 's,
 {
-    let mut res = HashMap::new();
+    let mut res = HashMap::default();
     for (idx, gadget) in gadgets {
         if gadget.base.kind.prop == netlist::GadgetProp::Mux {
             let sel_name = "sel".to_owned();
@@ -196,7 +198,7 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
         let o_node = ggraph.add_node(GFNode::Output);
         let inv_node_in = ggraph.add_node(GFNode::Invalid);
         let inv_node_out = ggraph.add_node(GFNode::Invalid);
-        let mut g_nodes = HashMap::new();
+        let mut g_nodes = HashMap::default();
         for (name, sgi) in internals.subgadgets.iter() {
             for lat in 0..n_cycles {
                 let g = ggraph.add_node(GFNode::Gadget(GadgetNode {
@@ -534,7 +536,7 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
 
     /// List the latencies at which each gadget is valid.
     pub fn list_valid(&self) -> HashMap<GName<'a>, Vec<Latency>> {
-        let mut gadgets = HashMap::new();
+        let mut gadgets = HashMap::default();
         for (id, gadget) in self.ggraph.gadgets() {
             if gadget.base.kind.prop != netlist::GadgetProp::Mux {
                 if self.gadget_valid(id) {
@@ -555,7 +557,7 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
 
     /// List the latencies at which each gadget is sensitive.
     pub fn list_sensitive(&self, sensitivity: Sensitive) -> HashMap<GName<'a>, Vec<Latency>> {
-        let mut gadgets = HashMap::new();
+        let mut gadgets = HashMap::default();
         for (id, gadget) in self.ggraph.gadgets() {
             if gadget.base.kind.prop != netlist::GadgetProp::Mux
                 && self.gadget_sensitivity(id) == sensitivity
@@ -675,8 +677,8 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
         controls: &mut clk_vcd::ModuleControls,
     ) -> CResult<'a, HashMap<TRandom<'a>, (Name<'a>, TRandom<'a>)>> {
         let mut rnd_gadget2input: Vec<HashMap<TRandom<'a>, Option<TRandom<'a>>>> =
-            vec![HashMap::new(); self.ggraph.node_count()];
-        let mut name_cache = HashMap::new();
+            vec![HashMap::default(); self.ggraph.node_count()];
+        let mut name_cache = HashMap::default();
         let mut errors: Vec<CompError<'a>> = Vec::new();
         println!("starting randoms_input_timing");
         let mut i = 0;
@@ -697,7 +699,7 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
             return Err(CompErrors::new(errors));
         }
         println!("rnd_gadget2input done, i: {}", i);
-        let mut rnd_input2use: HashMap<TRandom<'a>, Vec<(NodeIndex, TRandom<'a>)>> = HashMap::new();
+        let mut rnd_input2use: HashMap<TRandom<'a>, Vec<(NodeIndex, TRandom<'a>)>> = HashMap::default();
         for (idx, rnd2input) in rnd_gadget2input.iter().enumerate() {
             for (rnd, rnd_input) in rnd2input.iter() {
                 if let Some(input) = rnd_input {
@@ -709,7 +711,7 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
             }
         }
         println!("rnd_input2use done");
-        let mut res: HashMap<TRandom<'a>, (Name<'a>, TRandom<'a>)> = HashMap::new();
+        let mut res: HashMap<TRandom<'a>, (Name<'a>, TRandom<'a>)> = HashMap::default();
         for (in_rnd, uses) in rnd_input2use.iter() {
             assert!(!uses.is_empty());
             if uses.iter().any(|(idx, _)| self.gadget_sensitive(*idx)) {
@@ -1069,7 +1071,7 @@ fn random_connections<'a, 'b>(
     sgi: &gadget_internals::GadgetInstance<'a, 'b>,
     cycle: u32,
 ) -> CResult<'a, HashMap<TRandom<'a>, TRndConnection<'a>>> {
-    let mut res = HashMap::new();
+    let mut res = HashMap::default();
     for (r_name, random_lats) in sgi.kind.randoms.iter() {
         match random_lats {
             Some(netlist::RndLatencies::Attr(random_lats)) => {
