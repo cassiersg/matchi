@@ -87,7 +87,7 @@ fn check_gadget<'a, 'b>(
             let ugg = gg.unroll(controls)?;
             ugg.check_outputs_valid(ugg.annotate_valid())?;
             println!("outputs valid");
-            if config.check_state_cleared {
+            if !config.no_check_state_cleared {
                 ugg.check_state_cleared(ugg.annotate_sensitive())?;
                 println!("state cleared");
             }
@@ -109,7 +109,7 @@ fn check_gadget<'a, 'b>(
             let ugg = gg.unroll(controls)?;
             ugg.check_outputs_valid(ugg.annotate_valid())?;
             println!("outputs valid");
-            if config.check_state_cleared {
+            if !config.no_check_state_cleared {
                 ugg.check_state_cleared(ugg.annotate_sensitive())?;
                 println!("state cleared");
             }
@@ -122,14 +122,14 @@ fn check_gadget<'a, 'b>(
             println!("Checking gadget {}...", gadget_name);
             assert_eq!(gadget.strat, netlist::GadgetStrat::CompositeProp);
             println!("computing internals...");
-            let gadget_internals = GadgetInternals::from_module(gadget, &gadgets)?;
+            let gadget_internals = GadgetInternals::from_module(gadget, gadgets)?;
             println!("internals computed");
             gadget_internals.check_sharings()?;
             println!("Sharings preserved: ok.");
 
             let n_simu_cycles = controls.len() as gadgets::Latency;
             let max_delay_output = gadget.max_output_lat();
-            if config.check_state_cleared {
+            if !config.no_check_state_cleared {
                 assert!(max_delay_output + 1 < n_simu_cycles);
             } else if max_delay_output + 1 > n_simu_cycles {
                 println!(
@@ -140,7 +140,7 @@ fn check_gadget<'a, 'b>(
                 );
                 return Ok(None);
             }
-            let n_analysis_cycles = if config.check_state_cleared {
+            let n_analysis_cycles = if !config.no_check_state_cleared {
                 max_delay_output + 2
             } else {
                 max_delay_output + 1
@@ -192,10 +192,10 @@ fn check_gadget<'a, 'b>(
             if check_rnd_annot {
                 graph.check_randomness_usage(controls)?;
             }
-            if config.check_state_cleared {
+            if !config.no_check_state_cleared {
                 graph.check_state_cleared()?;
             }
-            if config.check_transitions {
+            if !config.no_check_transitions {
                 graph.check_parallel_seq_gadgets()?;
             }
             comp_prop::check_sec_prop(&graph)?;
@@ -254,7 +254,7 @@ fn check_gadget_top<'a>(
         .into());
     };
     if (max_delay_output + 1 > n_cycles)
-        || (max_delay_output + 1 >= n_cycles && config.check_state_cleared)
+        || (max_delay_output + 1 >= n_cycles && !config.no_check_state_cleared)
     {
         return Err(CompError {
             module: Some(&netlist.modules[gadget_name]),
@@ -263,7 +263,7 @@ fn check_gadget_top<'a>(
                 "Not enough simulated cycles to check the top-level gadget.\n\
                  Note: number of simulated cycles should be at least maximum output delay{}.\n\
                  Note: max_out_delay: {}, n_cycles: {}.",
-                if config.check_state_cleared {
+                if !config.no_check_state_cleared {
                     " + 2 (since we are checking if state is cleared after last output)"
                 } else {
                     " + 1"

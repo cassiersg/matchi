@@ -1,117 +1,42 @@
 //! Command-line parsing for the app.
 
-use clap::{App, Arg};
+use clap::Parser;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Parser)]
+#[command(author, version, about, long_about = None)]
 pub struct Config {
+    #[arg(long)]
+    /// Path to synthesized json file from Yosys.
     pub json: String,
+    #[arg(long)]
+    /// Path to simulation vcd file.
     pub vcd: String,
+    #[arg(long)]
+    /// Testbench module name.
     pub tb: String,
+    #[arg(long)]
+    /// Main gadget module name.
     pub gname: String,
+    #[arg(long)]
+    /// Name of the in_valid signal in the testbench.
     pub in_valid: String,
+    #[arg(long)]
+    /// Name of the DUT instance in the testbench.
     pub dut: String,
+    #[arg(long("clock"))]
+    /// Name of the clock signal in the testbench.
     pub clk: String,
-    pub check_state_cleared: bool,
-    pub check_transitions: bool,
+    #[arg(short, long)]
+    /// Do not check for the presence of remaining secrets after the execution.
+    pub no_check_state_cleared: bool,
+    #[arg(short, long)]
+    /// Do not check transition leakage.
+    pub no_check_transitions: bool,
+    #[arg(short, long)]
+    /// More verbose output.
     pub verbose: bool,
 }
 
 pub fn parse_cmd_line() -> Config {
-    let matches = App::new("fullverif")
-        .version("0.1")
-        .author("Gaëtan Cassiers <gaetan.cassiers@uclouvain.be>")
-        .about("Composition-based verification of masked hardware circuits.")
-        .arg(
-            Arg::with_name("json")
-                .long("json")
-                .value_name("FILE")
-                .help("Synthesized json file from Yosys")
-                .takes_value(true)
-                .required(true),
-        )
-        .arg(
-            Arg::with_name("vcd")
-                .long("vcd")
-                .value_name("FILE")
-                .help("Simulation vcd file")
-                .takes_value(true)
-                .required(true),
-        )
-        .arg(
-            Arg::with_name("tb")
-                .long("tb")
-                .help("Testbench module name")
-                .takes_value(true)
-                .required(true),
-        )
-        .arg(
-            Arg::with_name("gname")
-                .long("gname")
-                .help("Main gadget module name")
-                .takes_value(true)
-                .required(true),
-        )
-        .arg(
-            Arg::with_name("in_valid")
-                .long("in-valid")
-                .help("Name of the in_valid signal in the testbench")
-                .takes_value(true)
-                .required(true),
-        )
-        .arg(
-            Arg::with_name("clock")
-                .long("clock")
-                .help("Name of the clock signal in the testbench")
-                .takes_value(true)
-                .required(true),
-        )
-        .arg(
-            Arg::with_name("dut")
-                .long("dut")
-                .help("Name of the DUT module in the testbench")
-                .takes_value(true)
-                .required(true),
-        )
-        .arg(
-            Arg::with_name("no_check_state_cleared")
-                .long("no-check-cleared")
-                .help("Skip verification that state is empty of valid sharings after last cycle.")
-                .takes_value(false),
-        )
-        .arg(
-            Arg::with_name("no_check_transitions")
-                .long("no-check-transitions")
-                .help("Skip verification that the circuit is transition-robust.")
-                .takes_value(false),
-        )
-        .arg(
-            Arg::with_name("verbose")
-                .long("verbose")
-                .short("v")
-                .help("Print more output.")
-                .takes_value(false),
-        )
-        .get_matches();
-    let json = matches.value_of("json").unwrap().to_owned();
-    let vcd = matches.value_of("vcd").unwrap().to_owned();
-    let tb = matches.value_of("tb").unwrap().to_owned();
-    let gname = matches.value_of("gname").unwrap().to_owned();
-    let in_valid = matches.value_of("in_valid").unwrap().to_owned();
-    let dut = matches.value_of("dut").unwrap().to_owned();
-    let clk = matches.value_of("clock").unwrap().to_owned();
-    let check_state_cleared = !matches.is_present("no_check_state_cleared");
-    let check_transitions = !matches.is_present("no_check_transitions");
-    let verbose = matches.is_present("verbose");
-    Config {
-        json,
-        vcd,
-        tb,
-        gname,
-        in_valid,
-        dut,
-        clk,
-        check_state_cleared,
-        check_transitions,
-        verbose,
-    }
+    Config::parse()
 }
