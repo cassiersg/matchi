@@ -2,18 +2,21 @@
 name = "fullverif"
 version = "0.1.0"
 authors = ["Gaëtan Cassiers <gaetan.cassiers@uclouvain.be>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 itertools = "0.8"
 petgraph = "0.6"
-log = { version = "0.4", features = ["max_level_trace", "release_max_level_info"] }
+log = { version = "0.4", features = [
+    "max_level_trace",
+    "release_max_level_info",
+] }
 env_logger = "0.7"
-vcd = "0.5"
+vcd = "0.7"
 yosys-netlist-json = "0.0.2"
 clap = "2.33"
 phantom_newtype = "0.2"
-derivative =  "2.2"
+derivative = "2.2"
 derive_more = "0.99"
 fnv = "1.0.7"
 
@@ -28,4 +31,3 @@ debug = true
 #[features]
 #default = []
 #flame_it = ["flame", "flamer"]
-

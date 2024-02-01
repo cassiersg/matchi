@@ -5,7 +5,7 @@ use crate::utils::format_set;
 
 use fnv::FnvHashMap as HashMap;
 use std::fs::File;
-use std::io::{prelude::*, BufReader};
+use std::io::BufReader;
 
 use yosys_netlist_json as yosys;
 
@@ -217,7 +217,7 @@ fn signal_path(module: &[String], sig_name: &str) -> Vec<String> {
 /// Verify that the top-level gadets (and all sub-gadgets) satisfy the rules.
 fn check_gadget_top<'a>(
     netlist: &'a yosys::Netlist,
-    simu: &mut impl Read,
+    simu: &mut impl std::io::BufRead,
     root_simu_mod: Vec<String>,
     config: &'a config::Config,
 ) -> Result<(), CompErrors<'a>> {

@@ -56,7 +56,7 @@ impl CacheNameIds {
 impl VcdStates {
     /// Create VcdStates from a reader of a vcd file and the path of the clock signal.
     pub fn new<'a>(
-        r: &mut impl std::io::Read,
+        r: &mut impl std::io::BufRead,
         clock: &[impl Borrow<str>],
     ) -> Result<Self, CompError<'a>> {
         let mut parser = vcd::Parser::new(r);
@@ -96,7 +96,7 @@ impl VcdStates {
                 dir = dir.scopes.get_mut(n).unwrap();
                 match &scope[dir.id] {
                     vcd::ScopeItem::Scope(s) => {
-                        scope = &s.children;
+                        scope = &s.items;
                     }
                     vcd::ScopeItem::Var(v) => {
                         if path_part == path.len() - 1 {
@@ -106,12 +106,16 @@ impl VcdStates {
                             break;
                         }
                     }
+                    _ => {}
                 }
             } else {
                 fn scope_id(s: &vcd::ScopeItem) -> &str {
                     let res = match s {
                         vcd::ScopeItem::Var(v) => &v.reference,
                         vcd::ScopeItem::Scope(s) => &s.identifier,
+                        _ => {
+                            unreachable!()
+                        }
                     };
                     // Remove leading backslash, in case the vcd is encoded using the "escaped
                     // identifier" syntax of verilog.
@@ -124,11 +128,11 @@ impl VcdStates {
                             .entry(scope_id(s).to_owned())
                             .or_insert(CacheNameIds::new(i));
                         if let vcd::ScopeItem::Scope(s) = s {
-                            scope = &s.children;
+                            scope = &s.items;
                         } else {
                             match &scope[dir.id] {
                                 vcd::ScopeItem::Scope(s) => {
-                                    scope = &s.children;
+                                    scope = &s.items;
                                 }
                                 vcd::ScopeItem::Var(v) => {
                                     if path_part == path.len() - 1 {
@@ -137,6 +141,9 @@ impl VcdStates {
                                         // error
                                         break;
                                     }
+                                }
+                                _ => {
+                                    unreachable!()
                                 }
                             }
                         }
@@ -282,7 +289,8 @@ impl<'a> ModuleControls<'a> {
 
 /// Maps the state of a vector signal from the vcd (truncated, BE) to the representation used in
 /// the states (not trucated, LE).
-fn pad_vec_and_reverse(mut vec: Vec<vcd::Value>, size: u32) -> Vec<vcd::Value> {
+fn pad_vec_and_reverse(vec: vcd::Vector, size: u32) -> Vec<vcd::Value> {
+    let mut vec: Vec<vcd::Value> = vec.into();
     // We need to reverse order of bits since last one in binary writing is at offset 0.
     // Then we pad since leading '0', 'x' or 'z' are not always written.
     let padding_value = if vec[0] == vcd::Value::V1 {
@@ -359,11 +367,12 @@ fn list_vars(header: &vcd::Header) -> HashMap<vcd::IdCode, vcd::Var> {
     while let Some(scope_item) = remaining_items.pop() {
         match scope_item {
             vcd::ScopeItem::Scope(scope) => {
-                remaining_items.extend(scope.children.iter());
+                remaining_items.extend(scope.items.iter());
             }
             vcd::ScopeItem::Var(var) => {
                 res.insert(var.code, var.clone());
             }
+            _ => {}
         }
     }
     res
