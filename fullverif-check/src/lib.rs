@@ -17,7 +17,6 @@ extern crate derivative;
 mod clk_vcd;
 mod comp_prop;
 mod config;
-mod deep_verif;
 mod error;
 mod gadget_internals;
 mod gadgets;
@@ -113,10 +112,11 @@ fn check_gadget<'a, 'b>(
                 ugg.check_state_cleared(ugg.annotate_sensitive())?;
                 println!("state cleared");
             }
-            let cg = ugg.computation_graph(ugg.annotate_sensitive());
-            deep_verif::check_deep_verif(&cg, gadget)?;
+            //let cg = ugg.computation_graph(ugg.annotate_sensitive());
+            //deep_verif::check_deep_verif(&cg, gadget)?;
+            unimplemented!("Deep verif is not implemented");
             // Return None as there is no sub-gadget to check (we don't accept sub-gadgets in deep_verif strategy).
-            Ok(None)
+            //Ok(None)
         }
         netlist::GadgetStrat::CompositeProp => {
             println!("Checking gadget {}...", gadget_name);
