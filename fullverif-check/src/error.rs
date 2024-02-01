@@ -301,7 +301,8 @@ impl<'a> fmt::Display for CompError<'a> {
                 writeln!(
                     f,
                     "Output {} of subgadget {} is too late by {} cycle(s). The subgadget execution at cycle {} has sensitive inputs and its latest output has latency {}, giving a total latency of {}, which is larger than the high output latency of the current gadget ({}).",
-                    output, sg, 
+                    output,
+                    sg,
                     gadget_lat + out_lat - max_out_lat,
                     gadget_lat, out_lat, gadget_lat+out_lat, max_out_lat
                 )?;
@@ -326,7 +327,8 @@ impl<'a> fmt::Display for CompError<'a> {
             CompErrorKind::ExcedentaryOutput(outputs) => {
                 writeln!(f, "The following outputs are sensitive (although annotation specifies they should not be valid):")?;
                 // Map { cycle -> Map { sharing_port_name -> (Option(correct latency), List { sharing_offset }) } }
-                let mut exc_outputs: HashMap<u32, HashMap<&str, (Option<Latency>, Vec<u32>)>> = HashMap::default();
+                let mut exc_outputs: HashMap<u32, HashMap<&str, (Option<Latency>, Vec<u32>)>> =
+                    HashMap::default();
                 for (sharing, cycle, expected_lat) in outputs {
                     exc_outputs
                         .entry(*cycle)
@@ -340,13 +342,19 @@ impl<'a> fmt::Display for CompError<'a> {
                 let exc_outputs: HashMap<u32, Vec<(&str, Option<Latency>, Vec<u32>)>> = exc_outputs
                     .into_iter()
                     .map(|(cycle, sharings)| {
-                        let mut s = sharings.into_iter().map(|(port_name, (exp_lat, offsets))| (port_name, exp_lat, offsets)).collect::<Vec<_>>();
+                        let mut s = sharings
+                            .into_iter()
+                            .map(|(port_name, (exp_lat, offsets))| (port_name, exp_lat, offsets))
+                            .collect::<Vec<_>>();
                         s.sort_unstable();
                         (cycle, s)
                     })
                     .collect();
                 // Map { Vec { (sharing_port_name, Option(expected_lat), List { sharing_offset }) } -> List { cycle } }
-                let mut exc_outputs_rev: HashMap<&Vec<(&str, Option<Latency>, Vec<u32>)>, Vec<u32>> = HashMap::default();
+                let mut exc_outputs_rev: HashMap<
+                    &Vec<(&str, Option<Latency>, Vec<u32>)>,
+                    Vec<u32>,
+                > = HashMap::default();
                 for (cycle, map) in exc_outputs.iter() {
                     exc_outputs_rev
                         .entry(map)

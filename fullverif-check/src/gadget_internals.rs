@@ -3,8 +3,8 @@
 
 use crate::error::{CResult, CompError, CompErrorKind, CompErrors, DBitVal};
 use crate::gadgets::{Gadget, Gadgets, Random, Sharing};
-use std::collections::{hash_map};
 use fnv::FnvHashMap as HashMap;
+use std::collections::hash_map;
 use yosys_netlist_json as yosys;
 
 pub enum GInst {}

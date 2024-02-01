@@ -177,7 +177,8 @@ pub fn netlist2gadgets<'a>(
 ) -> Result<HashMap<GKind<'a>, Gadget<'a>>, CompError<'a>> {
     let mut netlist_modules: Vec<_> = netlist.modules.iter().collect();
     netlist_modules.sort_unstable_by_key(|&(name, _module)| name);
-    let res = netlist_modules.into_iter()
+    let res = netlist_modules
+        .into_iter()
         .filter_map(|(module_name, module)| {
             (|| {
                 Ok(module2gadget(module, module_name)?

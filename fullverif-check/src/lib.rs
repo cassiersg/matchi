@@ -207,7 +207,11 @@ fn check_gadget<'a, 'b>(
 
 /// Return the path of a signal in a module, splitting the signal name if needed.
 fn signal_path(module: &[String], sig_name: &str) -> Vec<String> {
-    module.iter().cloned().chain(sig_name.split('.').map(ToOwned::to_owned)).collect()
+    module
+        .iter()
+        .cloned()
+        .chain(sig_name.split('.').map(ToOwned::to_owned))
+        .collect()
 }
 
 /// Verify that the top-level gadets (and all sub-gadgets) satisfy the rules.
@@ -231,8 +235,8 @@ fn check_gadget_top<'a>(
         }
     });
 
-    let in_valid_path =  signal_path(root_simu_mod.as_slice(), config.in_valid.as_str());
-    let dut_path =  signal_path(root_simu_mod.as_slice(), config.dut.as_str());
+    let in_valid_path = signal_path(root_simu_mod.as_slice(), config.in_valid.as_str());
+    let dut_path = signal_path(root_simu_mod.as_slice(), config.dut.as_str());
     let mut controls = clk_vcd::ModuleControls::from_enable(&vcd_states, dut_path, &in_valid_path)?;
 
     let n_cycles = controls.len() as gadgets::Latency;
@@ -292,7 +296,8 @@ fn check_gadget_top<'a>(
         let controls = controls.submodule((*name.get()).to_owned(), cycle as usize);
         gadgets_to_check.push((gadget_name, controls));
     }
-    let mut gadgets_checked: HashMap<gadgets::GKind, Vec<clk_vcd::StateLookups>> = HashMap::default();
+    let mut gadgets_checked: HashMap<gadgets::GKind, Vec<clk_vcd::StateLookups>> =
+        HashMap::default();
     while let Some((sg_name, mut sg_controls)) = gadgets_to_check.pop() {
         // Check if one of our state lookups matches the current state.
         let mut gadget_ok = false;

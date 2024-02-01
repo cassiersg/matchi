@@ -387,13 +387,17 @@ pub fn get_names(
     module: &yosys::Module,
     net: yosys::BitVal,
 ) -> impl Iterator<Item = (&str, usize)> {
-    let mut netnames : Vec<_> = module.netnames.iter().flat_map(move |(name, netname)| {
-        netname
-            .bits
-            .iter()
-            .positions(move |bitval| *bitval == net)
-            .map(move |i| (name.as_str(), i))
-    }).collect();
+    let mut netnames: Vec<_> = module
+        .netnames
+        .iter()
+        .flat_map(move |(name, netname)| {
+            netname
+                .bits
+                .iter()
+                .positions(move |bitval| *bitval == net)
+                .map(move |i| (name.as_str(), i))
+        })
+        .collect();
     netnames.sort_unstable();
     netnames.into_iter()
 }

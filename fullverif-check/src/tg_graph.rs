@@ -5,14 +5,14 @@ use crate::error::{CResult, CompError, CompErrorKind, CompErrors};
 use crate::gadget_internals::{self, Connection, GName, RndConnection};
 use crate::gadgets::{self, Input, Latency, Sharing};
 use crate::netlist::{self, RndLatencies};
+use fnv::FnvHashMap as HashMap;
+use fnv::FnvHashSet as HashSet;
 use petgraph::{
     graph::{self, EdgeReference, NodeIndex},
     visit::{EdgeFiltered, EdgeRef, IntoNodeIdentifiers},
     Direction, Graph,
 };
 use std::collections::BinaryHeap;
-use fnv::FnvHashMap as HashMap;
-use fnv::FnvHashSet as HashSet;
 
 /// A gadget id in the GadgetFlow
 pub type Name<'a> = (GName<'a>, Latency);
@@ -699,7 +699,8 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
             return Err(CompErrors::new(errors));
         }
         println!("rnd_gadget2input done, i: {}", i);
-        let mut rnd_input2use: HashMap<TRandom<'a>, Vec<(NodeIndex, TRandom<'a>)>> = HashMap::default();
+        let mut rnd_input2use: HashMap<TRandom<'a>, Vec<(NodeIndex, TRandom<'a>)>> =
+            HashMap::default();
         for (idx, rnd2input) in rnd_gadget2input.iter().enumerate() {
             for (rnd, rnd_input) in rnd2input.iter() {
                 if let Some(input) = rnd_input {

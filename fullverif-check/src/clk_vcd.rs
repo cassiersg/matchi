@@ -1,8 +1,8 @@
 //! Analysis of vcd files as a series of state, for each clock cycle.
 
 use crate::error::{CompError, CompErrorKind};
-use std::borrow::Borrow;
 use fnv::FnvHashMap as HashMap;
+use std::borrow::Borrow;
 
 /// State of a circuit at one clock cycle.
 pub type State = HashMap<vcd::IdCode, VarState>;

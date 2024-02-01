@@ -6,6 +6,7 @@
 use crate::clk_vcd;
 use crate::error::{CResult, CompError, CompErrorKind, CompErrors, DBitVal};
 use crate::gadgets::{Gadget, Gadgets, Latency, Random, Sharing};
+use fnv::FnvHashMap as HashMap;
 use itertools::Itertools;
 use petgraph::{
     graph::{self, NodeIndex},
@@ -13,7 +14,6 @@ use petgraph::{
     Direction, Graph,
 };
 use std::collections::{hash_map, BTreeSet};
-use fnv::FnvHashMap as HashMap;
 use yosys_netlist_json as yosys;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -269,7 +269,11 @@ impl<'a: 'b, 'b> UnrolledGates<'a, 'b> {
             }
         }
         let mut used_gates = vec![false; self.tgates.node_count()];
-        for probe in max_eprobes_internal.iter().chain(max_eprobes_output.iter()).flat_map(|p| p.iter()) {
+        for probe in max_eprobes_internal
+            .iter()
+            .chain(max_eprobes_output.iter())
+            .flat_map(|p| p.iter())
+        {
             used_gates[probe.index()] = true;
         }
         let sorted_tgates = petgraph::algo::toposort(&self.tgates, None).unwrap();
@@ -327,9 +331,10 @@ impl<'a: 'b, 'b> UnrolledGates<'a, 'b> {
         let mut outputs_map = HashMap::default();
         let mut e_probes_output = Vec::new();
         for (output, ep) in outputs.into_iter().zip(max_eprobes_output.into_iter()) {
-            let ep = ep.iter()
-                    .map(|p| mapped_gates[p.index()].unwrap())
-                    .collect::<BTreeSet<_>>();
+            let ep = ep
+                .iter()
+                .map(|p| mapped_gates[p.index()].unwrap())
+                .collect::<BTreeSet<_>>();
             if let Some(pos) = e_probes_output.iter().position(|p| &ep == p) {
                 outputs_map.insert(output, pos);
             } else {
