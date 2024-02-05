@@ -1,6 +1,7 @@
 //! Analysis of vcd files as a series of state, for each clock cycle.
 
 use crate::error::{CompError, CompErrorKind};
+use anyhow::{bail, Result};
 use fnv::FnvHashMap as HashMap;
 use std::borrow::Borrow;
 
@@ -55,13 +56,11 @@ impl CacheNameIds {
 
 impl VcdStates {
     /// Create VcdStates from a reader of a vcd file and the path of the clock signal.
-    pub fn new<'a>(
-        r: &mut impl std::io::BufRead,
-        clock: &[impl Borrow<str>],
-    ) -> Result<Self, CompError<'a>> {
+    pub fn new<'a>(r: &mut impl std::io::BufRead, clock: &[impl Borrow<str>]) -> Result<Self> {
         let mut parser = vcd::Parser::new(r);
-        let vcd_error = CompError::no_mod(CompErrorKind::Vcd);
-        let header = parser.parse_header().map_err(|_| vcd_error.clone())?;
+        let Ok(header) = parser.parse_header() else {
+            bail!("TODO format {:?}", CompError::no_mod(CompErrorKind::Vcd));
+        };
         let clock = header
             .find_var(clock)
             .ok_or_else(|| {
@@ -75,7 +74,14 @@ impl VcdStates {
         let states = clocked_states(
             &vars,
             clock,
-            parser.map(|cmd| cmd.map_err(|_| vcd_error.clone())),
+            parser.map(|cmd| {
+                cmd.map_err(|_| {
+                    anyhow::Error::msg(format!(
+                        "TODO format {:?}",
+                        CompError::no_mod(CompErrorKind::Vcd)
+                    ))
+                })
+            }),
         )?;
         let cache_ids = std::cell::RefCell::new(CacheNameIds::default());
         Ok(Self {
@@ -86,7 +92,7 @@ impl VcdStates {
     }
 
     /// VarId from the path (list of strings) of a variable
-    pub fn get_var_id<'a>(&self, path: &[impl Borrow<str>]) -> Result<VarId, CompError<'a>> {
+    pub fn get_var_id<'a>(&self, path: &[impl Borrow<str>]) -> Result<VarId> {
         let mut cache = self.cache_ids.borrow_mut();
         let mut dir: &mut CacheNameIds = &mut (*cache);
         let mut scope: &[vcd::ScopeItem] = &self.header.items;
@@ -154,15 +160,7 @@ impl VcdStates {
                 }
             }
         }
-        return Err(CompError {
-            module: None,
-            net: None,
-            kind: CompErrorKind::Other(format!(
-                "Error: Did not find signal {} in vcd file.",
-                path.join(".")
-            )),
-        }
-        .into());
+        bail!("Error: Did not find signal {} in vcd file.", path.join("."));
     }
 
     /// State of a variable. Returns None if the cycle is too large compared to what was in the vcd.
@@ -224,20 +222,16 @@ impl<'a> ModuleControls<'a> {
         vcd_states: &'a VcdStates,
         root_module: Vec<String>,
         enable: &[impl Borrow<str>],
-    ) -> Result<Self, CompError<'b>> {
+    ) -> Result<Self> {
         let enable_code = vcd_states.get_var_id(enable)?;
-        let offset = (0..vcd_states.len())
-            .find(|i| {
-                vcd_states.get_var(enable_code, *i).unwrap() == &VarState::Scalar(vcd::Value::V1)
-            })
-            .ok_or_else(|| CompError {
-                module: None,
-                net: None,
-                kind: CompErrorKind::Other(format!(
-                    "Error: Enable signal {:?} never asserted.",
-                    enable.join(".")
-                )),
-            })?;
+        let Some(offset) = (0..vcd_states.len()).find(|i| {
+            vcd_states.get_var(enable_code, *i).unwrap() == &VarState::Scalar(vcd::Value::V1)
+        }) else {
+            bail!(
+                "Error: Enable signal {:?} never asserted.",
+                enable.join(".")
+            )
+        };
         debug!("ModuleControls offset: {}", offset);
         Ok(Self::new(vcd_states, root_module, offset))
     }
@@ -263,7 +257,7 @@ impl<'a> ModuleControls<'a> {
         path: Vec<String>,
         cycle: usize,
         idx: usize,
-    ) -> Result<Option<&VarState>, CompError<'b>> {
+    ) -> Result<Option<&VarState>> {
         let mut p: Vec<String> = self.root_module.clone();
         p.extend(path.iter().map(|s| s.to_owned()));
         let var_id = self.vcd_states.get_var_id(&p)?;
@@ -307,8 +301,8 @@ fn pad_vec_and_reverse(vec: vcd::Vector, size: u32) -> Vec<vcd::Value> {
 fn clocked_states<'a>(
     vars: &HashMap<vcd::IdCode, vcd::Var>,
     clock: vcd::IdCode,
-    commands: impl Iterator<Item = Result<vcd::Command, CompError<'a>>>,
-) -> Result<Vec<State>, CompError<'a>> {
+    commands: impl Iterator<Item = Result<vcd::Command>>,
+) -> Result<Vec<State>> {
     let mut states = Vec::new();
     let mut current_state = vars
         .keys()
@@ -333,11 +327,11 @@ fn clocked_states<'a>(
                         }
                         vcd::Value::X | vcd::Value::Z => {
                             if started {
-                                return Err(CompError::no_mod(CompErrorKind::Other(format!(
+                                bail!(
                                     "Invalid value for the clock: {:?} (at cycle >= {}).",
                                     value,
                                     states.len()
-                                ))));
+                                );
                             }
                         }
                     }

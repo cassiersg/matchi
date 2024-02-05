@@ -4,8 +4,10 @@
 //! connections, connections to the randomness.
 
 use crate::clk_vcd;
-use crate::error::{CResult, CompError, CompErrorKind, CompErrors, DBitVal};
+use crate::error::{CompError, CompErrorKind, DBitVal};
 use crate::gadgets::{Gadget, Gadgets, Latency, Random, Sharing};
+use anyhow::bail;
+use anyhow::Result;
 use fnv::FnvHashMap as HashMap;
 use itertools::Itertools;
 use petgraph::{
@@ -182,32 +184,30 @@ impl<'a: 'b, 'b> UnrolledGates<'a, 'b> {
         }
         return sensitive;
     }
-    pub fn check_state_cleared(&self, sensitive: Vec<bool>) -> Result<(), CompError<'a>> {
+    pub fn check_state_cleared(&self, sensitive: Vec<bool>) -> Result<()> {
         for (node, g) in self.gadget.gates.node_references() {
             if let GNode::Gate(RawGate::Reg, id) = g {
                 let input = self.gadget.input(node, "D");
                 if let Some(n) = self.gates2timed.get(&(input, self.n_cycles - 1)) {
                     if sensitive[n.index()] {
-                        return Err(CompError::ref_nw(
-                            &self.gadget.gadget.module,
-                            CompErrorKind::Other(format!(
-                                "DFF {}[{}] contains sensitive state past the last output",
-                                id.cell, id.offset
-                            )),
-                        ));
+                        bail!(
+                            "DFF {}[{}] contains sensitive state past the last output",
+                            id.cell,
+                            id.offset
+                        );
                     }
                 }
             }
         }
         return Ok(());
     }
-    pub fn check_outputs_valid(&self, valid: Vec<bool>) -> Result<(), CompError<'a>> {
+    pub fn check_outputs_valid(&self, valid: Vec<bool>) -> Result<()> {
         for (output, o_share) in self.outputs.iter() {
             if !valid[output.index()] {
-                return Err(CompError::ref_nw(
-                    self.gadget.gadget.module,
+                bail!(
+                    "TODO format {:?}",
                     CompErrorKind::OutputNotValid(vec![(o_share.sharing, self.tgates[*output].1)]),
-                ));
+                );
             }
         }
         return Ok(());
@@ -364,7 +364,7 @@ impl<'a: 'b, 'b> UnrolledGates<'a, 'b> {
 }
 
 impl<'a, 'b> GadgetGates<'a, 'b> {
-    pub fn from_gadget(gadget: &'b Gadget<'a>) -> Result<Self, CompError<'a>> {
+    pub fn from_gadget(gadget: &'b Gadget<'a>) -> Result<Self> {
         let mut gates = petgraph::Graph::new();
         let mut wires = HashMap::default();
         let mut gate_names = HashMap::default();
@@ -430,7 +430,7 @@ impl<'a, 'b> GadgetGates<'a, 'b> {
                         }
                         ("$mux", _) => {
                             if *port_name == "S" {
-                                return Err(CompError::ref_nw(gadget.module, CompErrorKind::Other(format!("The wire {:?} depends on randomness or shares and drives the selector of the mux {}. This is not supported.", bitval, cell_name))));
+                                bail!("The wire {:?} depends on randomness or shares and drives the selector of the mux {}. This is not supported.", bitval, cell_name)
                             }
                             let ctrl = cell.connections["S"][*offset as usize];
                             Some((RawGate::Mux(ctrl), "Y"))
@@ -438,7 +438,7 @@ impl<'a, 'b> GadgetGates<'a, 'b> {
                         ("$not", _) | ("$_NOT_", _) => Some((RawGate::Inv, "Y")),
                         (_, Some(kind)) => Some((RawGate::BoolBin(kind), "Y")),
                         _ => {
-                            return Err(CompError::ref_nw(gadget.module, CompErrorKind::Other(format!("The cell {} (port {}[{}]) is connected to a random/sensitive wire but is not a known type of gate (type: {})", cell_name, port_name, offset, cell.cell_type))));
+                            bail!("The cell {} (port {}[{}]) is connected to a random/sensitive wire but is not a known type of gate (type: {})", cell_name, port_name, offset, cell.cell_type)
                         }
                     };
                     if let Some((kind, output_name)) = output {
@@ -506,7 +506,7 @@ impl<'a, 'b> GadgetGates<'a, 'b> {
     pub fn unroll(
         &'b self,
         controls: &mut clk_vcd::ModuleControls,
-    ) -> CResult<'a, UnrolledGates<'a, 'b>> {
+    ) -> Result<UnrolledGates<'a, 'b>> {
         let n_cycles = self.gadget.max_output_lat() + 1;
         let sorted_nodes = self.sort_nodes()?;
         let mut res = Graph::new();
@@ -609,7 +609,7 @@ impl<'a, 'b> GadgetGates<'a, 'b> {
         wire: yosys::BitVal,
         cycle: Latency,
         controls: &mut clk_vcd::ModuleControls,
-    ) -> CResult<'a, bool> {
+    ) -> Result<bool> {
         let (wire_name, offset) = crate::netlist::get_names(self.gadget.module, wire)
             .next()
             .expect("No names for net");
@@ -617,18 +617,21 @@ impl<'a, 'b> GadgetGates<'a, 'b> {
             .lookup(vec![wire_name.to_owned()], cycle as usize, offset)?
             .and_then(|var_state| var_state.to_bool())
             .ok_or_else(|| {
-                CompError::other(
-                    &self.gadget.module,
-                    wire_name,
-                    &format!(
-                        "Control signal {}[{}] has no valid value at cycle {}",
-                        wire_name, offset, cycle
-                    ),
-                )
+                anyhow::Error::msg(format!(
+                    "TODO format {:?}",
+                    CompError::other(
+                        &self.gadget.module,
+                        wire_name,
+                        &format!(
+                            "Control signal {}[{}] has no valid value at cycle {}",
+                            wire_name, offset, cycle
+                        ),
+                    )
+                ))
             })?;
         return Ok(res);
     }
-    fn sort_nodes(&self) -> Result<Vec<petgraph::graph::NodeIndex>, CompError<'a>> {
+    fn sort_nodes(&self) -> Result<Vec<petgraph::graph::NodeIndex>> {
         let mut g = self.gates.clone();
         g.clear_edges();
         for e in self.gates.raw_edges().iter() {
@@ -640,13 +643,10 @@ impl<'a, 'b> GadgetGates<'a, 'b> {
             }
         }
         Ok(petgraph::algo::toposort(&g, None).map_err(|cycle| {
-            CompError::ref_nw(
-                &self.gadget.module,
-                CompErrorKind::Other(format!(
-                    "Looping data depdendency containing gadget {:?}",
-                    g[cycle.node_id()]
-                )),
-            )
+            anyhow::Error::msg(format!(
+                "Looping data depdendency containing gadget {:?}",
+                g[cycle.node_id()]
+            ))
         })?)
     }
 }

@@ -2,6 +2,7 @@
 
 use crate::error::{CompError, CompErrorKind};
 use crate::netlist::{self, GadgetProp, GadgetStrat, WireAttrs};
+use anyhow::{bail, Result};
 use fnv::FnvHashMap as HashMap;
 use yosys_netlist_json as yosys;
 
@@ -52,36 +53,36 @@ pub struct Gadget<'a> {
 }
 
 /// The name of a gadget.
-pub type GKind<'a> = phantom_newtype::Id<Gadget<'a>, &'a str>;
+//pub type GKind<'a> = phantom_newtype::Id<Gadget<'a>, &'a str>;
+// TODO fix.
+pub type GKind<'a> = &'a str;
 
 /// A series of gadget declarations
 pub type Gadgets<'a> = HashMap<GKind<'a>, Gadget<'a>>;
 
 /// Convert a module to a gadget.
-fn module2gadget<'a>(
-    module: &'a yosys::Module,
-    name: &'a str,
-) -> Result<Option<Gadget<'a>>, CompError<'a>> {
+fn module2gadget<'a>(module: &'a yosys::Module, name: &'a str) -> Result<Option<Gadget<'a>>> {
     let prop = if let Some(prop) = netlist::module_prop(module)? {
         prop
-    } else if let Err(CompError {
-        kind: CompErrorKind::MissingAnnotation(_),
-        ..
-    }) = netlist::module_strat(module)
-    {
+    } else if let Ok(None) = netlist::module_strat(module) {
         return Ok(None);
     } else {
-        return Err(CompError::ref_nw(
-            module,
+        bail!(
+            "TODO format {:?}",
             CompErrorKind::MissingAnnotation("fv_prop".to_owned()),
-        ));
+        );
     };
     // Decide if gadget is composite or not.
-    let strat = netlist::module_strat(module)?;
+    let Some(strat) = netlist::module_strat(module)? else {
+        bail!(
+            "TODO format {:?}",
+            CompErrorKind::MissingAnnotation("fv_strat".to_owned())
+        );
+    };
     let order = netlist::module_order(module)?;
     // Initialize gadget.
     let mut res = Gadget {
-        name: name.into(),
+        name,
         module,
         clock: None,
         inputs: HashMap::default(),
@@ -99,11 +100,14 @@ fn module2gadget<'a>(
             (WireAttrs::Sharing { latencies, count }, dir @ yosys::PortDirection::Input)
             | (WireAttrs::Sharing { latencies, count }, dir @ yosys::PortDirection::Output) => {
                 if port.bits.len() as u32 != order * count {
-                    return Err(CompError::ref_sn(
-                        module,
-                        port_name,
-                        CompErrorKind::WrongWireWidth(port.bits.len() as u32, order * count),
-                    ));
+                    bail!(
+                        "TODO format {:?}",
+                        CompError::ref_sn(
+                            module,
+                            port_name,
+                            CompErrorKind::WrongWireWidth(port.bits.len() as u32, order * count),
+                        )
+                    );
                 }
                 for pos in 0..count {
                     if dir == yosys::PortDirection::Input {
@@ -111,7 +115,7 @@ fn module2gadget<'a>(
                             .insert(Sharing { port_name, pos }, latencies.clone());
                     } else {
                         if latencies.len() != 1 {
-                            return Err(CompError::ref_sn(
+                            bail!("TODO format {:?}", CompError::ref_sn(
                         module,
                         port_name,
                         CompErrorKind::Other(format!("Outputs can be valid at only one cycle (current latencies: {:?})", latencies))));
@@ -134,47 +138,55 @@ fn module2gadget<'a>(
             (WireAttrs::Control, _) => {}
             (WireAttrs::Clock, _) => {
                 if res.clock.is_some() {
-                    return Err(CompError::ref_sn(
-                        module,
-                        port_name,
-                        CompErrorKind::Other(
-                            "Multiple clocks for gadget, while only one is supported.".to_string(),
-                        ),
-                    ));
+                    bail!(
+                        "TODO format {:?}",
+                        CompError::ref_sn(
+                            module,
+                            port_name,
+                            CompErrorKind::Other(
+                                "Multiple clocks for gadget, while only one is supported."
+                                    .to_string(),
+                            ),
+                        )
+                    );
                 }
                 res.clock = Some(port_name);
                 if port.bits.len() != 1 {
-                    return Err(CompError::ref_sn(
-                        module,
-                        port_name,
-                        CompErrorKind::WrongWireWidth(port.bits.len() as u32, 1),
-                    ));
+                    bail!(
+                        "TODO format {:?}",
+                        CompError::ref_sn(
+                            module,
+                            port_name,
+                            CompErrorKind::WrongWireWidth(port.bits.len() as u32, 1),
+                        )
+                    );
                 }
             }
             (attr, yosys::PortDirection::InOut)
             | (attr @ WireAttrs::Random(_), yosys::PortDirection::Output) => {
-                return Err(CompError {
-                    module: Some(module),
-                    net: Some(module.netnames[port_name].clone()),
-                    kind: CompErrorKind::InvalidPortDirection {
-                        attr,
-                        direction: port.direction,
-                    },
-                });
+                bail!(
+                    "TODO format {:?}",
+                    CompError::ref_sn(
+                        module,
+                        port_name,
+                        CompErrorKind::InvalidPortDirection {
+                            attr,
+                            direction: port.direction,
+                        },
+                    )
+                );
             }
         }
     }
     if res.outputs.is_empty() {
-        return Err(CompError::ref_nw(module, CompErrorKind::NoOutput));
+        bail!("TODO format {:?}", CompErrorKind::NoOutput);
     }
     res.output_lat_ok()?;
     Ok(Some(res))
 }
 
 /// Convert a netlist to a list of gadgets.
-pub fn netlist2gadgets<'a>(
-    netlist: &'a yosys::Netlist,
-) -> Result<HashMap<GKind<'a>, Gadget<'a>>, CompError<'a>> {
+pub fn netlist2gadgets(netlist: &yosys::Netlist) -> Result<HashMap<GKind, Gadget>> {
     let mut netlist_modules: Vec<_> = netlist.modules.iter().collect();
     netlist_modules.sort_unstable_by_key(|&(name, _module)| name);
     let res = netlist_modules
@@ -186,7 +198,7 @@ pub fn netlist2gadgets<'a>(
             })()
             .transpose()
         })
-        .collect::<Result<HashMap<_, _>, _>>()?;
+        .collect::<Result<HashMap<_, _>>>()?;
     Ok(res)
 }
 
@@ -214,7 +226,7 @@ impl<'a> Gadget<'a> {
     }
 
     /// Verify that the output latencies are larger than any input or random latency.
-    fn output_lat_ok(&self) -> Result<(), CompError<'a>> {
+    fn output_lat_ok(&self) -> Result<()> {
         let min_o_lat = self.outputs.values().cloned().max().unwrap();
         let inputs_lats = self.inputs.values().flat_map(|x| x.iter());
         let randoms_lats = self
@@ -231,7 +243,7 @@ impl<'a> Gadget<'a> {
         let max_in_lat = inputs_lats.chain(randoms_lats).copied().min();
         if let Some(max_in_lat) = max_in_lat {
             if max_in_lat > min_o_lat {
-                return Err(CompError::ref_nw(self.module, CompErrorKind::EarlyOutput));
+                bail!("TODO format {:?}", CompErrorKind::EarlyOutput);
             }
         }
         return Ok(());

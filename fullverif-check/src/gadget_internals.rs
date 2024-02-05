@@ -1,8 +1,10 @@
 //! Internals of a composite gadgets: sub-gadgets, their connections, inputs and outputs
 //! connections, connections to the randomness.
 
-use crate::error::{CResult, CompError, CompErrorKind, CompErrors, DBitVal};
+use crate::error::{CompErrorKind, DBitVal};
 use crate::gadgets::{Gadget, Gadgets, Random, Sharing};
+use anyhow::bail;
+use anyhow::Result;
 use fnv::FnvHashMap as HashMap;
 use std::collections::hash_map;
 use yosys_netlist_json as yosys;
@@ -103,47 +105,46 @@ fn map_rnd<'a>(
     rnd: Random<'a>,
     cell_name: &'a str,
     module: &'a yosys::Module,
-) -> CResult<'a, (Random<'a>, RndConnection<'a>)> {
+) -> Result<(Random<'a>, RndConnection<'a>)> {
     let rnd_bitval = &module.cells[cell_name].connections[rnd.port_name][rnd.offset as usize];
-    map.get(rnd_bitval)
-        .ok_or_else(|| {
-            CompError::ref_nw(
-                module,
-                CompErrorKind::Other(format!(
-                    "Bad random bit for port {:?} of subgadget {:?}",
-                    &rnd.port_name, cell_name
-                )),
-            )
-            .into()
-        })
-        .map(|rnd_mapped| (rnd, *rnd_mapped))
+    let Some(rnd_mapped) = map.get(rnd_bitval) else {
+        bail!(
+            "Bad random bit for port {:?} of subgadget {:?}",
+            &rnd.port_name,
+            cell_name
+        );
+    };
+    Ok((rnd, *rnd_mapped))
 }
 
 impl<'a, 'b> GadgetInternals<'a, 'b> {
     /// Build internals from the module associated to the gadget
-    pub fn from_module(gadget: &'b Gadget<'a>, lib_gadgets: &'b Gadgets<'a>) -> CResult<'a, Self> {
+    pub fn from_module(
+        gadget: &'b Gadget<'a>,
+        lib_gadgets: &'b Gadgets<'a>,
+    ) -> anyhow::Result<Self> {
         // List subgadgets.
         let mut subgadgets = HashMap::<GName<'a>, GadgetInstance<'a, 'b>>::default();
         let (rnd_gates, rnd_map) = module2randoms(gadget, lib_gadgets)?;
         let mut module_cells: Vec<_> = gadget.module.cells.iter().collect();
         module_cells.sort_unstable_by_key(|&(name, _cell)| name);
         for (cell_name, cell) in module_cells {
-            if let Some(sg) = lib_gadgets.get(&cell.cell_type.as_str().into()) {
+            if let Some(sg) = lib_gadgets.get(&cell.cell_type.as_str()) {
                 if sg.order != gadget.order {
-                    Err(CompError::ref_nw(
-                        gadget.module,
+                    bail!(
+                        "TODO format {:?}",
                         CompErrorKind::MixedOrder(
                             cell_name.as_str().into(),
                             sg.order,
                             gadget.order,
                         ),
-                    ))?;
+                    );
                 }
                 let random_connections = sg
                     .randoms
                     .keys()
                     .map(|sg_rnd| map_rnd(&rnd_map, *sg_rnd, cell_name, gadget.module))
-                    .collect::<Result<HashMap<_, _>, CompErrors<'a>>>()?;
+                    .collect::<Result<HashMap<_, _>>>()?;
                 subgadgets.insert(
                     cell_name.as_str().into(),
                     GadgetInstance {
@@ -176,35 +177,33 @@ impl<'a, 'b> GadgetInternals<'a, 'b> {
             if let hash_map::Entry::Vacant(entry) = sharings.entry(bits) {
                 entry.insert(sharing);
             } else {
-                return Err(CompErrors::new(vec![CompError {
-                    module: Some(gadget.module),
-                    net: Some(
-                        gadget
-                            .module
-                            .netnames
-                            .values()
-                            .find(|netname| netname.bits == bits)
-                            .unwrap()
-                            .clone(),
-                    ),
-                    kind: CompErrorKind::MultipleSourceSharing(vec![sharing, sharings[bits]]),
-                }]));
+                bail!(
+                    "TODO: better message for net {:?} with kind {:?}",
+                    gadget
+                        .module
+                        .netnames
+                        .values()
+                        .find(|netname| netname.bits == bits)
+                        .unwrap()
+                        .clone(),
+                    CompErrorKind::MultipleSourceSharing(vec![sharing, sharings[bits]])
+                );
             }
         }
         // Connect subgadget inputs to sharings
         for (sg_name, sg) in subgadgets.iter_mut() {
             for input_name in sg.kind.inputs.keys() {
                 let bits = get_connection_bits(input_name, gadget, *sg_name);
-                let sharing = sharings.get(bits).ok_or_else(|| {
-                    CompError::ref_nw(
-                        gadget.module,
+                let Some(sharing) = sharings.get(bits) else {
+                    bail!(
+                        "TODO format {:?}",
                         CompErrorKind::MissingSourceSharing {
                             subgadget: *sg_name,
                             sharing: *input_name,
                             nets: bits,
                         },
-                    )
-                })?;
+                    );
+                };
                 sg.input_connections
                     .insert(input_name.clone(), sharing.clone());
             }
@@ -213,13 +212,13 @@ impl<'a, 'b> GadgetInternals<'a, 'b> {
         let mut output_connections = HashMap::default();
         for output_name in gadget.outputs.keys() {
             let bits = get_port_bits(output_name, gadget.module, gadget.order);
-            let sharing = sharings.get(bits).ok_or_else(|| {
-                CompError::ref_sn(
-                    gadget.module,
+            let Some(sharing) = sharings.get(bits) else {
+                bail!(
+                    "TODO format {:?} {:?}",
                     &output_name.port_name,
                     CompErrorKind::MissingSourceSharingOut(*output_name),
-                )
-            })?;
+                );
+            };
             output_connections.insert(output_name.clone(), sharing.clone());
         }
         Ok(GadgetInternals {
@@ -233,7 +232,7 @@ impl<'a, 'b> GadgetInternals<'a, 'b> {
     /// Checks the the Gadget is respects sharings: that each use of a sharing (input or
     /// generated by a sub-gadget) happens as a whole as an input sharing to a sub-gadget or as an
     /// output sharing.
-    pub fn check_sharings(&self) -> Result<(), CompError<'a>> {
+    pub fn check_sharings(&self) -> anyhow::Result<()> {
         let gadget = self.gadget;
         // List wires that carry a share, that is, wires that are an output of a sub-gadget or
         // belong to an input sharing.
@@ -273,15 +272,15 @@ impl<'a, 'b> GadgetInternals<'a, 'b> {
                 // connection is not a sharing. Check it doesn't use shares
                 for (i, bitval) in conn.iter().enumerate() {
                     if let Some(conn) = shares.get(bitval) {
-                        return Err(CompError::ref_nw(
-                            gadget.module,
+                        bail!(
+                            "TODO format {:?}",
                             CompErrorKind::BadShareUse(
                                 **conn,
                                 cell_name.clone(),
                                 conn_name.clone(),
                                 i,
                             ),
-                        ));
+                        );
                     }
                 }
             }
@@ -291,10 +290,10 @@ impl<'a, 'b> GadgetInternals<'a, 'b> {
                 // this is not a sharing, check that it doesn't use shares
                 for (i, bitval) in port.bits.iter().enumerate() {
                     if let Some(conn) = shares.get(bitval) {
-                        return Err(CompError::ref_nw(
-                            gadget.module,
+                        bail!(
+                            "TODO format {:?}",
                             CompErrorKind::BadShareUse(**conn, String::new(), port_name.clone(), i),
-                        ));
+                        );
                     }
                 }
             }
@@ -307,13 +306,10 @@ impl<'a, 'b> GadgetInternals<'a, 'b> {
 fn module2randoms<'a>(
     gadget: &Gadget<'a>,
     lib_gadgets: &Gadgets<'a>,
-) -> Result<
-    (
-        HashMap<RndGateId<'a>, RndGate<'a>>,
-        HashMap<&'a yosys::BitVal, RndConnection<'a>>,
-    ),
-    CompErrors<'a>,
-> {
+) -> Result<(
+    HashMap<RndGateId<'a>, RndGate<'a>>,
+    HashMap<&'a yosys::BitVal, RndConnection<'a>>,
+)> {
     // Start from the randomness input ports
     let mut wires2rnds: HashMap<&yosys::BitVal, RndConnection> = gadget
         .randoms
@@ -387,7 +383,7 @@ fn module2randoms<'a>(
                     }
                     _ => {
                         if lib_gadgets
-                            .get(&(*cell.cell_type.as_str()).into())
+                            .get(&(*cell.cell_type.as_str()))
                             .map(|gadget| {
                                 !gadget.randoms.contains_key(&Random {
                                     port_name,
@@ -396,7 +392,7 @@ fn module2randoms<'a>(
                             })
                             .unwrap_or(true)
                         {
-                            return Err(CompErrors::new(vec![CompError::ref_nw(gadget.module, CompErrorKind::Other(format!("The cell {} (port {}[{}]) is connected to a random wire but is not a gadget, mux or DFF (type: {})", cell_name, port_name, offset, cell.cell_type)))]));
+                            bail!("The cell {} (port {}[{}]) is connected to a random wire but is not a gadget, mux or DFF (type: {})", cell_name, port_name, offset, cell.cell_type);
                         } else {
                             None
                         }

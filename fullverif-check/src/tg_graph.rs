@@ -1,10 +1,12 @@
 //! Dataflow graph generation and security properties verification.
 
 use crate::clk_vcd;
-use crate::error::{CResult, CompError, CompErrorKind, CompErrors};
+use crate::error::{collect_errors, CompError, CompErrorKind};
 use crate::gadget_internals::{self, Connection, GName, RndConnection};
 use crate::gadgets::{self, Input, Latency, Sharing};
 use crate::netlist::{self, RndLatencies};
+use anyhow::bail;
+use anyhow::Result;
 use fnv::FnvHashMap as HashMap;
 use fnv::FnvHashSet as HashSet;
 use petgraph::{
@@ -108,7 +110,7 @@ const EMPTY_SHARING: Sharing = Sharing {
 fn mux_ctrls<'a, 'b, 's, Idx: std::hash::Hash + std::cmp::Eq>(
     gadgets: impl Iterator<Item = (Idx, &'s GadgetNode<'a, 'b>)>,
     controls: &'s mut clk_vcd::ModuleControls,
-) -> CResult<'a, HashMap<Idx, Option<bool>>>
+) -> Result<HashMap<Idx, Option<bool>>>
 where
     'a: 'b,
     'b: 's,
@@ -191,7 +193,7 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
         ggraph: &mut Graph<GFNode<'a, 'b>, Edge<'a>>,
         internals: &gadget_internals::GadgetInternals<'a, 'b>,
         n_cycles: Latency,
-    ) -> CResult<'a, (HashMap<Name<'a>, NodeIndex>, NodeIndex)> {
+    ) -> Result<(HashMap<Name<'a>, NodeIndex>, NodeIndex)> {
         let i_nodes = (0..n_cycles)
             .map(|lat| ggraph.add_node(GFNode::Input(lat)))
             .collect::<Vec<_>>();
@@ -286,7 +288,7 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
         internals: gadget_internals::GadgetInternals<'a, 'b>,
         n_cycles: Latency,
         controls: &mut clk_vcd::ModuleControls,
-    ) -> CResult<'a, Self> {
+    ) -> Result<Self> {
         let mut ggraph = Graph::new();
         let (g_nodes, o_node) = Self::build_graph(&mut ggraph, &internals, n_cycles)?;
         let ggraph = GGraph(ggraph);
@@ -328,18 +330,19 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
         ggraph: &GGraph<'a, 'b>,
         internals: &gadget_internals::GadgetInternals<'a, 'b>,
         muxes_ctrls: &HashMap<NodeIndex, Option<bool>>,
-    ) -> CResult<'a, Vec<NodeIndex>> {
+    ) -> Result<Vec<NodeIndex>> {
         let fggraph = EdgeFiltered::from_fn(&ggraph.0, |edge_ref| {
             Self::mux_filterer(edge_ref, muxes_ctrls)
         });
         Ok(petgraph::algo::toposort(&fggraph, None).map_err(|cycle| {
-            CompError::ref_nw(
+            anyhow::Error::msg(format!(
+                "TODO format {:?} {:?}",
                 &internals.gadget.module,
                 CompErrorKind::Other(format!(
                     "Looping data depdendency containing gadget {:?}",
                     ggraph[cycle.node_id()]
                 )),
-            )
+            ))
         })?)
     }
 
@@ -349,7 +352,7 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
         internals: &gadget_internals::GadgetInternals<'a, 'b>,
         muxes_ctrls: &HashMap<NodeIndex, Option<bool>>,
         sorted_nodes: &[NodeIndex],
-    ) -> Result<(Vec<bool>, Vec<Sensitive>), CompError<'a>> {
+    ) -> Result<(Vec<bool>, Vec<Sensitive>)> {
         let mut edges_valid: Vec<Option<bool>> = vec![None; ggraph.edge_count()];
         let mut edges_sensitive: Vec<Option<Sensitive>> = vec![None; ggraph.edge_count()];
         for idx in sorted_nodes.into_iter() {
@@ -617,7 +620,7 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
     }
 
     /// Checks that all the inputs are valid when the should be valid according to specification.
-    pub fn check_valid_outputs(&self) -> CResult<'a, ()> {
+    pub fn check_valid_outputs(&self) -> Result<()> {
         let valid_outputs = self
             .ggraph
             .g_inputs(self.o_node)
@@ -638,10 +641,10 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
             .filter(|(sh, lat)| !valid_outputs.contains(&(*sh, *lat)))
             .collect::<Vec<_>>();
         if !missing_outputs.is_empty() {
-            Err(CompError::ref_nw(
-                &self.internals.gadget.module,
+            bail!(
+                "TODO format {:?}",
                 CompErrorKind::OutputNotValid(missing_outputs),
-            ))?;
+            );
         }
         let excedentary_outputs = self
             .ggraph
@@ -663,10 +666,10 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
             })
             .collect::<Vec<_>>();
         if !excedentary_outputs.is_empty() {
-            Err(CompError::ref_nw(
-                &self.internals.gadget.module,
+            bail!(
+                "TODO format {:?}",
                 CompErrorKind::ExcedentaryOutput(excedentary_outputs),
-            ))?;
+            );
         }
         Ok(())
     }
@@ -675,29 +678,32 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
     pub fn randoms_input_timing(
         &self,
         controls: &mut clk_vcd::ModuleControls,
-    ) -> CResult<'a, HashMap<TRandom<'a>, (Name<'a>, TRandom<'a>)>> {
+    ) -> Result<HashMap<TRandom<'a>, (Name<'a>, TRandom<'a>)>> {
         let mut rnd_gadget2input: Vec<HashMap<TRandom<'a>, Option<TRandom<'a>>>> =
             vec![HashMap::default(); self.ggraph.node_count()];
         let mut name_cache = HashMap::default();
-        let mut errors: Vec<CompError<'a>> = Vec::new();
+        let mut errors: Vec<anyhow::Error> = Vec::new();
         println!("starting randoms_input_timing");
         let mut i = 0;
         for (idx, gadget) in self.ggraph.gadgets() {
             for conn in gadget.random_connections.keys() {
                 i += 1;
                 let rnd_in =
-                    random_to_input(&self.internals, controls, gadget, conn, &mut name_cache);
-                if let Err(e) = &rnd_in {
-                    if self.gadget_sensitive(idx) {
-                        errors.extend_from_slice(&e.0);
-                    }
-                }
-                rnd_gadget2input[idx.index()].insert(*conn, rnd_in.ok().map(|x| x.0));
+                    match random_to_input(&self.internals, controls, gadget, conn, &mut name_cache)
+                    {
+                        Ok(rnd_in) => Some(rnd_in),
+                        Err(e) => {
+                            if self.gadget_sensitive(idx) {
+                                errors.push(e);
+                            }
+                            None
+                        }
+                    };
+                rnd_gadget2input[idx.index()].insert(*conn, rnd_in.map(|x| x.0));
             }
         }
-        if !errors.is_empty() {
-            return Err(CompErrors::new(errors));
-        }
+        collect_errors(errors)?;
+        let mut errors: Vec<anyhow::Error> = Vec::new();
         println!("rnd_gadget2input done, i: {}", i);
         let mut rnd_input2use: HashMap<TRandom<'a>, Vec<(NodeIndex, TRandom<'a>)>> =
             HashMap::default();
@@ -735,13 +741,13 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
                             )
                         })
                         .collect::<Vec<_>>();
-                    errors.push(CompError::ref_nw(
-                        &self.internals.gadget.module,
+                    errors.push(anyhow::Error::msg(format!(
+                        "TODO format {:?}",
                         CompErrorKind::MultipleUseRandom {
                             random: *in_rnd,
                             uses: random_uses,
                         },
-                    ));
+                    )));
                     if errors.len() >= 100 {
                         break;
                     }
@@ -752,24 +758,21 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
             }
         }
         println!("res done");
-        if !errors.is_empty() {
-            return Err(CompErrors::new(errors));
-        }
+        collect_errors(errors)?;
         Ok(res)
     }
 
-    pub fn check_randomness_usage(
-        &self,
-        controls: &mut clk_vcd::ModuleControls,
-    ) -> CResult<'a, ()> {
+    pub fn check_randomness_usage(&self, controls: &mut clk_vcd::ModuleControls) -> Result<()> {
         for (rnd, lats) in self.internals.gadget.randoms.iter() {
             if lats.is_none() {
-                return Err(CompError::missing_annotation(
-                    &self.internals.gadget.module,
-                    rnd.port_name,
-                    "fv_latency",
-                )
-                .into());
+                bail!(
+                    "TODO format {:} ",
+                    CompError::missing_annotation(
+                        &self.internals.gadget.module,
+                        rnd.port_name,
+                        "fv_latency",
+                    )
+                );
             }
         }
         let errors = self
@@ -779,23 +782,26 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
                 if is_rnd_valid(&self.internals.gadget, rnd, *lat, controls)? {
                     Ok(())
                 } else {
-                    Err(CompError::other(
-                        &self.internals.gadget.module,
-                        rnd.port_name,
-                        &format!(
+                    bail!(
+                        "TODO format {:?}",
+                        CompError::other(
+                            &self.internals.gadget.module,
+                            rnd.port_name,
+                            &format!(
                             "Random input {} is used at cycle {} while not valid at that cycle.",
                             rnd, lat
                         ),
-                    ))
+                        )
+                    );
                 }
             })
             .filter_map(Result::err)
             .collect::<Vec<_>>();
-        CompErrors::result(errors)
+        collect_errors(errors)
     }
 
     /// Verifies that there is no any more sensitive state in the circuit after n_cycles.
-    pub fn check_state_cleared(&self) -> CResult<'a, ()> {
+    pub fn check_state_cleared(&self) -> Result<()> {
         let max_out_lat = self.internals.gadget.max_output_lat();
         let errors = self
             .ggraph
@@ -805,8 +811,8 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
                 self.ggraph.g_outputs(idx).filter_map(move |e| {
                     let out_lat = gadget.base.kind.outputs[&e.weight().output];
                     if gadget.name.1 + out_lat > max_out_lat {
-                        Some(CompError::ref_nw(
-                            &self.internals.gadget.module,
+                        Some(anyhow::Error::msg(format!(
+                            "TODO format {:?}",
                             CompErrorKind::LateOutput(
                                 max_out_lat,
                                 gadget.name.1,
@@ -814,14 +820,14 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
                                 (*gadget.name.0.get()).to_owned(),
                                 e.weight().output,
                             ),
-                        ))
+                        )))
                     } else {
                         None
                     }
                 })
             })
             .collect::<Vec<_>>();
-        CompErrors::result(errors)
+        collect_errors(errors)
     }
 
     /// Iterator over sensitive gadgets.
@@ -929,19 +935,16 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
         return res;
     }
 
-    pub fn check_parallel_seq_gadgets(&self) -> CResult<'a, ()> {
+    pub fn check_parallel_seq_gadgets(&self) -> Result<()> {
         let errors = self.list_non_parllel_seq_gadgets().into_iter().map(|(name, follower)| {
-            CompError::ref_nw(
-                &self.internals.gadget.module,
-                CompErrorKind::Other(
+            anyhow::Error::msg(
                     format!(
                         "PINI Gadget {} is sensitive at all cycles between {} and {} (included), and input of execution {} depends on output of execution {}, which breaks transition-robust security.",
                         name.0, name.1, follower, follower, name.1
                     )
                 )
-            )
         }).collect::<Vec<_>>();
-        CompErrors::result(errors)
+        collect_errors(errors)
     }
 }
 
@@ -950,12 +953,14 @@ pub fn is_rnd_valid<'a>(
     rnd: &gadgets::Random<'a>,
     lat: Latency,
     controls: &mut clk_vcd::ModuleControls,
-) -> Result<bool, CompError<'a>> {
+) -> Result<bool> {
     match &gadget.randoms[rnd] {
         Some(RndLatencies::Attr(lats)) => Ok(lats.contains(&lat)),
         Some(RndLatencies::Wire { wire_name, offset }) => {
-            let cycle = <u32 as std::convert::TryFrom<i32>>::try_from((lat as i32) + offset)
-                .map_err(|_| {
+            let Ok(cycle) = <u32 as std::convert::TryFrom<i32>>::try_from((lat as i32) + offset)
+            else {
+                bail!(
+                    "TODO format {:?}",
                     CompError::other(
                         &gadget.module,
                         rnd.port_name,
@@ -964,11 +969,14 @@ pub fn is_rnd_valid<'a>(
                             lat, offset
                         ),
                     )
-                })?;
-            let valid = controls
+                );
+            };
+            let Some(valid) = controls
                 .lookup(vec![wire_name.clone()], cycle as usize, 0)?
                 .and_then(|var_state| var_state.to_bool())
-                .ok_or_else(|| {
+            else {
+                bail!(
+                    "TODO format {:?}",
                     CompError::other(
                         &gadget.module,
                         rnd.port_name,
@@ -977,10 +985,11 @@ pub fn is_rnd_valid<'a>(
                             cycle, lat
                         ),
                     )
-                })?;
+                );
+            };
             Ok(valid)
         }
-        None => Err(CompError::ref_sn(
+        None => bail!("TODO format {:?}", CompError::ref_sn(
             &gadget.module,
             rnd.port_name,
             CompErrorKind::Other(
@@ -1007,18 +1016,17 @@ fn random_to_input<'a, 'b>(
     gadget: &GadgetNode<'a, 'b>,
     rnd_name: &TRandom<'a>,
     names_cache: &mut HashMap<&'a str, (&'a str, usize)>,
-) -> CResult<'a, (TRandom<'a>, RndTrace<'a>)> {
+) -> Result<(TRandom<'a>, RndTrace<'a>)> {
     let module = internals.gadget.module;
     let trandom = &gadget.random_connections[rnd_name];
     let mut trandom_w: Vec<(RndConnection<'a>, gadgets::Latency)> = vec![(trandom.0, trandom.1)];
     loop {
         let rnd_to_add = match &trandom_w[trandom_w.len() - 1] {
             (RndConnection::Invalid(bit), _) => {
-                return Err(CompError::ref_nw(
-                    module,
+                bail!(
+                    "TODO format {:?}",
                     CompErrorKind::InvalidRandom(trandom_w.clone(), gadget.name, *rnd_name, *bit),
-                )
-                .into());
+                );
             }
             (RndConnection::Port(rnd), cycle) => {
                 return Ok((((*rnd, *cycle)), trandom_w.clone()));
@@ -1026,7 +1034,7 @@ fn random_to_input<'a, 'b>(
             (RndConnection::Gate(gate_id), cycle) => match &internals.rnd_gates[&gate_id] {
                 gadget_internals::RndGate::Reg { input: new_conn } => {
                     if *cycle == 0 {
-                        Err(CompError::ref_nw(module, CompErrorKind::Other(format!("Randomness for random {:?} of gadget {:?} comes from a cycle before cycle 0 (through reg {:?})", rnd_name, gadget.name, gate_id))))?;
+                        bail!("Randomness for random {:?} of gadget {:?} comes from a cycle before cycle 0 (through reg {:?})", rnd_name, gadget.name, gate_id);
                     }
                     (*new_conn, cycle - 1)
                 }
@@ -1039,14 +1047,7 @@ fn random_to_input<'a, 'b>(
                     let var_name = netlist::format_name(var_name);
                     match controls.lookup(vec![var_name], *cycle as usize, *offset)? {
                         None => {
-                            return Err(CompError::ref_nw(
-                                module,
-                                CompErrorKind::Other(format!(
-                                    "Random comes from a late gate for gadget {:?}",
-                                    gadget.name
-                                )),
-                            )
-                            .into());
+                            bail!("Random comes from a late gate for gadget {:?}", gadget.name);
                         }
                         Some(clk_vcd::VarState::Scalar(vcd::Value::V0)) => (*ina, *cycle),
                         Some(clk_vcd::VarState::Scalar(vcd::Value::V1)) => (*inb, *cycle),
@@ -1054,10 +1055,12 @@ fn random_to_input<'a, 'b>(
                         Some(sel @ clk_vcd::VarState::Scalar(vcd::Value::Z))
                         | Some(sel @ clk_vcd::VarState::Uninit)
                         | Some(sel @ clk_vcd::VarState::Scalar(vcd::Value::X)) => {
-                            return Err(CompError::ref_nw(module, CompErrorKind::Other(format!(
-                                    "Invalid control signal {:?} for mux {} at cycle {} for randomness", sel,
-                                    gate_id.cell, cycle
-                                ))).into());
+                            bail!(
+                                "Invalid control signal {:?} for mux {} at cycle {} for randomness",
+                                sel,
+                                gate_id.cell,
+                                cycle
+                            );
                         }
                     }
                 }
@@ -1071,7 +1074,7 @@ fn random_to_input<'a, 'b>(
 fn random_connections<'a, 'b>(
     sgi: &gadget_internals::GadgetInstance<'a, 'b>,
     cycle: u32,
-) -> CResult<'a, HashMap<TRandom<'a>, TRndConnection<'a>>> {
+) -> anyhow::Result<HashMap<TRandom<'a>, TRndConnection<'a>>> {
     let mut res = HashMap::default();
     for (r_name, random_lats) in sgi.kind.randoms.iter() {
         match random_lats {
@@ -1084,11 +1087,12 @@ fn random_connections<'a, 'b>(
                 }
             }
             Some(netlist::RndLatencies::Wire { .. }) | None => {
-                Err(CompError::ref_sn(
+                bail!(
+                    "TODO format: {:?} {:?} {:?}",
                     sgi.kind.module,
                     &r_name.port_name,
                     CompErrorKind::MissingAnnotation("fv_lat".to_owned()),
-                ))?;
+                );
             }
         }
     }

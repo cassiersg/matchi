@@ -3,6 +3,7 @@
 
 use crate::error::{CompError, CompErrorKind};
 use crate::gadgets::{self, Latency};
+use anyhow::{bail, Result};
 use itertools::Itertools;
 use std::convert::TryInto;
 use yosys_netlist_json as yosys;
@@ -20,15 +21,18 @@ fn get_str_attr<'a>(
     module: &'a yosys::Module,
     netname: &str,
     attr: &str,
-) -> Result<Option<&'a str>, CompError<'a>> {
+) -> Result<Option<&'a str>> {
     if let Some(attr_v) = module.netnames[netname].attributes.get(attr) {
         match attr_v {
             yosys::AttributeVal::S(x) => Ok(Some(x)),
-            _ => Err(CompError::ref_sn(
-                module,
-                netname,
-                CompErrorKind::WrongAnnotation(attr.to_owned(), attr_v.clone()),
-            )),
+            _ => bail!(
+                "TODO format {:?}",
+                CompError::ref_sn(
+                    module,
+                    netname,
+                    CompErrorKind::WrongAnnotation(attr.to_owned(), attr_v.clone()),
+                )
+            ),
         }
     } else {
         Ok(None)
@@ -59,19 +63,18 @@ fn attr2int(attr: &yosys::AttributeVal) -> Result<u32, ()> {
 /// Return the attribute `attr` on the net `netname` in `module` as an integer.
 /// If the attribute is not present, return None.
 /// If it has not the correct type (or overflows), return an Err.
-fn get_int_attr<'a>(
-    module: &'a yosys::Module,
-    netname: &str,
-    attr: &str,
-) -> Result<Option<i32>, CompError<'a>> {
+fn get_int_attr<'a>(module: &'a yosys::Module, netname: &str, attr: &str) -> Result<Option<i32>> {
     if let Some(attr_v) = module.netnames[netname].attributes.get(attr) {
         match attr2int(attr_v) {
             Ok(x) => Ok(Some(x as i32)),
-            Err(()) => Err(CompError::ref_sn(
-                module,
-                netname,
-                CompErrorKind::WrongAnnotation(attr.to_owned(), attr_v.clone()),
-            )),
+            Err(()) => bail!(
+                "TODO format {:?}",
+                CompError::ref_sn(
+                    module,
+                    netname,
+                    CompErrorKind::WrongAnnotation(attr.to_owned(), attr_v.clone()),
+                )
+            ),
         }
     } else {
         Ok(None)
@@ -82,18 +85,21 @@ fn get_int_attr_pos<'a>(
     module: &'a yosys::Module,
     netname: &str,
     attr: &str,
-) -> Result<Option<u32>, CompError<'a>> {
+) -> Result<Option<u32>> {
     get_int_attr(module, netname, attr).and_then(|v| {
         v.map(|n| {
             if n < 0 {
-                Err(CompError::ref_sn(
-                    module,
-                    netname,
-                    CompErrorKind::WrongAnnotation(
-                        attr.to_owned(),
-                        yosys::AttributeVal::N(n as usize),
-                    ),
-                ))
+                bail!(
+                    "TODO format {:?}",
+                    CompError::ref_sn(
+                        module,
+                        netname,
+                        CompErrorKind::WrongAnnotation(
+                            attr.to_owned(),
+                            yosys::AttributeVal::N(n as usize),
+                        ),
+                    )
+                )
             } else {
                 Ok(n as u32)
             }
@@ -103,13 +109,14 @@ fn get_int_attr_pos<'a>(
 }
 
 /// See get_int_attr but returns Err if the attribute is not present.
-fn get_int_attr_needed<'a>(
-    module: &'a yosys::Module,
-    netname: &str,
-    attr: &str,
-) -> Result<i32, CompError<'a>> {
-    get_int_attr(module, netname, attr)?
-        .ok_or_else(|| CompError::missing_annotation(module, netname, attr))
+fn get_int_attr_needed<'a>(module: &'a yosys::Module, netname: &str, attr: &str) -> Result<i32> {
+    let Some(attr) = get_int_attr(module, netname, attr)? else {
+        bail!(
+            "TODO format {:?}",
+            CompError::missing_annotation(module, netname, attr)
+        )
+    };
+    Ok(attr)
 }
 
 /// Gen the attribute `attr` on netname in module.
@@ -119,7 +126,7 @@ fn get_bitstring_attr<'a>(
     module: &'a yosys::Module,
     netname: &str,
     attr: &str,
-) -> Result<Option<Vec<bool>>, CompError<'a>> {
+) -> Result<Option<Vec<bool>>> {
     if let Some(attr_v) = module.netnames[netname].attributes.get(attr) {
         // We have to handle the string attribute case since this is how
         // yosys encodes ints with more than 32 bits.
@@ -133,11 +140,14 @@ fn get_bitstring_attr<'a>(
                     .map(|c| match c {
                         '0' => Ok(false),
                         '1' => Ok(true),
-                        _ => Err(CompError::ref_sn(
-                            module,
-                            netname,
-                            CompErrorKind::WrongAnnotation(attr.to_owned(), attr_v.clone()),
-                        )),
+                        _ => bail!(
+                            "TODO format {:?}",
+                            CompError::ref_sn(
+                                module,
+                                netname,
+                                CompErrorKind::WrongAnnotation(attr.to_owned(), attr_v.clone()),
+                            )
+                        ),
                     })
                     .collect::<Result<Vec<bool>, _>>()?,
             )),
@@ -201,7 +211,7 @@ fn get_latencies<'a>(
     attr_latencies: &str,
     attr_latencies_wire: &str,
     attr_lat_sig_offset: &str,
-) -> Result<RndLatencies, CompError<'a>> {
+) -> Result<RndLatencies> {
     let latency = get_int_attr_pos(module, netname, attr_latency)?;
     let latencies = get_bitstring_attr(module, netname, attr_latencies)?;
     let latencies_wire = get_str_attr(module, netname, attr_latencies_wire)?;
@@ -216,18 +226,25 @@ fn get_latencies<'a>(
         .map(|(_, a)| a)
         .collect::<Vec<_>>();
     if present_attrs.len() >= 2 {
-        return Err(CompError::ref_sn(
-            module,
-            netname,
-            CompErrorKind::ConflictingAnnotations(
-                present_attrs[0].to_string(),
-                present_attrs[1].to_string(),
-            ),
-        ));
+        bail!(
+            "TODO format {:?}",
+            CompError::ref_sn(
+                module,
+                netname,
+                CompErrorKind::ConflictingAnnotations(
+                    present_attrs[0].to_string(),
+                    present_attrs[1].to_string(),
+                ),
+            )
+        );
     }
     let latencies = if let Some(latencies_wire) = latencies_wire {
-        let offset = get_int_attr(module, netname, attr_lat_sig_offset)?
-            .ok_or_else(|| CompError::missing_annotation(module, netname, attr_lat_sig_offset))?;
+        let Some(offset) = get_int_attr(module, netname, attr_lat_sig_offset)? else {
+            bail!(
+                "TODO format {:?}",
+                CompError::missing_annotation(module, netname, attr_lat_sig_offset)
+            );
+        };
         RndLatencies::Wire {
             wire_name: latencies_wire.to_string(),
             offset,
@@ -242,16 +259,16 @@ fn get_latencies<'a>(
     } else if let Some(l) = latency {
         RndLatencies::Attr(vec![l.try_into().expect("negative latency")])
     } else {
-        return Err(CompError::missing_annotation(module, netname, attr_latency));
+        bail!(
+            "TODO format {:?}",
+            CompError::missing_annotation(module, netname, attr_latency)
+        );
     };
     return Ok(latencies);
 }
 
 /// Get the type of a port.
-pub fn net_attributes<'a>(
-    module: &'a yosys::Module,
-    netname: &str,
-) -> Result<WireAttrs, CompError<'a>> {
+pub fn net_attributes<'a>(module: &'a yosys::Module, netname: &str) -> Result<WireAttrs> {
     let net = &module.netnames[netname];
     let fv_type = net.attributes.get("fv_type");
     let fv_count = get_int_attr_pos(module, netname, "fv_count")?;
@@ -267,11 +284,14 @@ pub fn net_attributes<'a>(
             )? {
                 latencies
             } else {
-                return Err(CompError::ref_sn(
-                    module,
-                    netname,
-                    CompErrorKind::MissingAnnotation("fv_latency".to_owned()),
-                ));
+                bail!(
+                    "TODO format {:?}",
+                    CompError::ref_sn(
+                        module,
+                        netname,
+                        CompErrorKind::MissingAnnotation("fv_latency".to_owned()),
+                    )
+                );
             };
             Ok(WireAttrs::Sharing {
                 latencies,
@@ -279,8 +299,12 @@ pub fn net_attributes<'a>(
             })
         }
         Some(yosys::AttributeVal::S(kind)) if kind == "random" => {
-            let fv_count = fv_count
-                .ok_or_else(|| CompError::missing_annotation(module, netname, "fv_count"))?;
+            let Some(fv_count) = fv_count else {
+                bail!(
+                    "TODO format {:?}",
+                    CompError::missing_annotation(module, netname, "fv_count")
+                );
+            };
             if fv_count == 0 {
                 Ok(WireAttrs::Random(vec![None; net.bits.len()]))
             } else {
@@ -301,7 +325,7 @@ pub fn net_attributes<'a>(
                     }
                 }
                 if res.len() != net.bits.len() {
-                    return Err(CompError::ref_sn(module, netname, CompErrorKind::Other(format!("Random has not correct length true length: {}, expected: {}, attributes: {:?}",
+                    bail!("TODO format {:?}", CompError::ref_sn(module, netname, CompErrorKind::Other(format!("Random has not correct length true length: {}, expected: {}, attributes: {:?}",
                 net.bits.len(),
                 res.len(),
                 net.attributes
@@ -312,20 +336,23 @@ pub fn net_attributes<'a>(
         }
         Some(yosys::AttributeVal::S(kind)) if kind == "control" => Ok(WireAttrs::Control),
         Some(yosys::AttributeVal::S(kind)) if kind == "clock" => Ok(WireAttrs::Clock),
-        _ => Err(CompError::ref_sn(
-            module,
-            netname,
-            CompErrorKind::Other(format!(
-                "Wrongly annotated port, attributes: {:?}",
-                net.attributes
-            )),
-        )),
+        _ => bail!(
+            "TODO format {:?}",
+            CompError::ref_sn(
+                module,
+                netname,
+                CompErrorKind::Other(format!(
+                    "Wrongly annotated port, attributes: {:?}",
+                    net.attributes
+                )),
+            )
+        ),
     }
 }
 
 /// Get the security property annotation of a module.
 /// Returns None if not specified, Err if invalid.
-pub fn module_prop<'a>(module: &'a yosys::Module) -> Result<Option<GadgetProp>, CompError<'a>> {
+pub fn module_prop<'a>(module: &'a yosys::Module) -> Result<Option<GadgetProp>> {
     module
         .attributes
         .get("fv_prop")
@@ -335,50 +362,52 @@ pub fn module_prop<'a>(module: &'a yosys::Module) -> Result<Option<GadgetProp>, 
             yosys::AttributeVal::S(attr) if attr == "NI" => Ok(GadgetProp::NI),
             yosys::AttributeVal::S(attr) if attr == "PINI" => Ok(GadgetProp::PINI),
             yosys::AttributeVal::S(attr) if attr == "SNI" => Ok(GadgetProp::SNI),
-            attr => Err(CompError {
-                module: Some(module),
-                net: None,
-                kind: CompErrorKind::WrongAnnotation("fv_prop".to_owned(), attr.clone()),
-            }),
+            attr => {
+                bail!(
+                    "TODO format {:?}",
+                    CompErrorKind::WrongAnnotation("fv_prop".to_owned(), attr.clone())
+                );
+            }
         })
         .transpose()
 }
 
 /// Get the security proof strategy for the module.
 /// Returns Err if the annotation is invalid of missing.
-pub fn module_strat<'a>(module: &'a yosys::Module) -> Result<GadgetStrat, CompError<'a>> {
-    match module.attributes.get("fv_strat").ok_or_else(|| {
-        CompError::ref_nw(
-            module,
-            CompErrorKind::MissingAnnotation("fv_strat".to_owned()),
-        )
-    })? {
-        yosys::AttributeVal::S(attr) if attr == "assumed" => Ok(GadgetStrat::Assumed),
-        yosys::AttributeVal::S(attr) if attr == "composite" => Ok(GadgetStrat::CompositeProp),
-        yosys::AttributeVal::S(attr) if attr == "isolate" => Ok(GadgetStrat::Isolate),
-        yosys::AttributeVal::S(attr) if attr == "deep_verif" => Ok(GadgetStrat::DeepVerif),
-        attr => Err(CompError::ref_nw(
-            module,
-            CompErrorKind::WrongAnnotation("fv_strat".to_owned(), attr.clone()),
-        )),
-    }
+pub fn module_strat<'a>(module: &'a yosys::Module) -> Result<Option<GadgetStrat>> {
+    let Some(attr) = module.attributes.get("fv_strat") else {
+        return Ok(None);
+    };
+    Ok(Some(match attr {
+        yosys::AttributeVal::S(attr) if attr == "assumed" => GadgetStrat::Assumed,
+        yosys::AttributeVal::S(attr) if attr == "composite" => GadgetStrat::CompositeProp,
+        yosys::AttributeVal::S(attr) if attr == "isolate" => GadgetStrat::Isolate,
+        yosys::AttributeVal::S(attr) if attr == "deep_verif" => GadgetStrat::DeepVerif,
+        attr => bail!(
+            "TODO format {:?}",
+            CompErrorKind::WrongAnnotation("fv_strat".to_owned(), attr.clone())
+        ),
+    }))
 }
 
 /// Get the masking number of shares of a module.
 /// Returns Err if the annotation is invalid of missing.
-pub fn module_order<'a>(module: &'a yosys::Module) -> Result<u32, CompError<'a>> {
-    let attr = module.attributes.get("fv_order").ok_or_else(|| {
-        CompError::ref_nw(
-            module,
-            CompErrorKind::MissingAnnotation("fv_order".to_owned()),
-        )
-    })?;
+pub fn module_order<'a>(module: &'a yosys::Module) -> Result<u32> {
+    let Some(attr) = module.attributes.get("fv_order") else {
+        bail!(
+            "TODO format {:?}",
+            CompError::ref_nw(
+                module,
+                CompErrorKind::MissingAnnotation("fv_order".to_owned()),
+            )
+        );
+    };
     match attr2int(attr) {
         Ok(x) if x >= 1 => Ok(x as u32),
-        _ => Err(CompError::ref_nw(
-            module,
+        _ => bail!(
+            "TODO format {:?}",
             CompErrorKind::WrongAnnotation("fv_order".to_owned(), attr.clone()),
-        )),
+        ),
     }
 }
 

@@ -21,11 +21,13 @@ derivative = "2.2"
 derive_more = "0.99"
 fnv = "1.0.7"
 
+anyhow = "1.0"
+
 #flame = { version = "0.2.2", optional = true }
 #flamer = { version = "0.3", optional = true }
 
-[profile.release]
-debug = true
+#[profile.release]
+#debug = true
 #lto = true
 
 

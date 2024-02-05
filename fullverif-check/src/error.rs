@@ -2,8 +2,6 @@
 //! CompError is the general error type, which as some generic attributes, and a CompErrorKind
 //! attrivute.
 //! CompErrorKind is an enum that conveys information about the type of error (and details).
-//! CompErrors is an Error type containing multiple CompError. We use it to report multiple errors
-//! to the user at once.
 
 use std::fmt;
 
@@ -16,7 +14,17 @@ use crate::utils::format_set;
 use fnv::FnvHashMap as HashMap;
 use yosys_netlist_json as yosys;
 
-pub type CResult<'a, T> = Result<T, CompErrors<'a>>;
+pub fn collect_errors(errors: Vec<anyhow::Error>) -> anyhow::Result<()> {
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        let errors = errors
+            .into_iter()
+            .map(|e| format!("{}", e))
+            .collect::<Vec<_>>();
+        Err(anyhow::Error::msg(errors.join("\n")))
+    }
+}
 
 #[derive(Debug, Clone, Derivative)]
 #[derivative(PartialEq, PartialOrd, Ord, Eq)]
@@ -101,29 +109,6 @@ impl<'a> fmt::Display for ASrc<'a> {
             Some(yosys::AttributeVal::S(src)) => write!(f, "{}", src),
             _ => write!(f, "(Unknown)"),
         }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct CompErrors<'a>(pub Vec<CompError<'a>>);
-
-impl<'a> CompErrors<'a> {
-    pub fn new(mut errors: Vec<CompError<'a>>) -> Self {
-        errors.sort_unstable();
-        Self(errors)
-    }
-    pub fn result(errors: Vec<CompError<'a>>) -> CResult<'a, ()> {
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(Self::new(errors))
-        }
-    }
-}
-
-impl<'a> From<CompError<'a>> for CompErrors<'a> {
-    fn from(x: CompError<'a>) -> Self {
-        Self(vec![x])
     }
 }
 
@@ -429,20 +414,6 @@ impl<'a> fmt::Display for gadget_internals::RndConnection<'a> {
     }
 }
 
-impl<'a> fmt::Display for CompErrors<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let n_max = 100;
-        for e in self.0.iter().take(n_max) {
-            write!(f, "{}", e)?;
-        }
-        if self.0.len() > n_max {
-            writeln!(f, "\t\t[...]")?;
-        }
-        writeln!(f, "fullverif: {} errors found.", self.0.len())?;
-        Ok(())
-    }
-}
-
 impl<'a> fmt::Display for Connection<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -462,7 +433,6 @@ impl<'a> fmt::Display for gadgets::Sharing<'a> {
 }
 
 impl<'a> std::error::Error for CompError<'a> {}
-impl<'a> std::error::Error for CompErrors<'a> {}
 
 #[derive(Debug, Clone)]
 pub struct DBitVal<'a>(pub &'a yosys::BitVal, pub &'a yosys::Module);

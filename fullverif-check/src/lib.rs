@@ -1,7 +1,8 @@
-use crate::error::{CResult, CompError, CompErrorKind, CompErrors};
 use crate::gadget_internals::GadgetInternals;
 use crate::gadgets::Latency;
 use crate::utils::format_set;
+
+use anyhow::{bail, Context, Result};
 
 use fnv::FnvHashMap as HashMap;
 use std::fs::File;
@@ -67,19 +68,14 @@ fn check_gadget<'a, 'b>(
     check_rnd_annot: bool,
     controls: &mut clk_vcd::ModuleControls,
     config: &config::Config,
-) -> CResult<'a, Option<tg_graph::GadgetFlow<'a, 'b>>> {
+) -> Result<Option<tg_graph::GadgetFlow<'a, 'b>>> {
     let gadget = &gadgets[&gadget_name];
     match gadget.strat {
         netlist::GadgetStrat::Assumed => Ok(None),
         netlist::GadgetStrat::Isolate => {
             println!("Checking gadget {}...", gadget_name);
             if gadget.prop != netlist::GadgetProp::Affine {
-                Err(CompError::ref_nw(
-                    gadget.module,
-                    CompErrorKind::Other(
-                        "Invalid strategy 'isolate' for non-affine gadget".to_owned(),
-                    ),
-                ))?;
+                bail!("Invalid strategy 'isolate' for non-affine gadget");
             }
             inner_affine::check_inner_affine(gadget)?;
             let gg = raw_internals::GadgetGates::from_gadget(gadget)?;
@@ -97,12 +93,7 @@ fn check_gadget<'a, 'b>(
         netlist::GadgetStrat::DeepVerif => {
             println!("Checking gadget {} (deep verif)...", gadget_name);
             if gadget.prop == netlist::GadgetProp::Affine {
-                Err(CompError::ref_nw(
-                    gadget.module,
-                    CompErrorKind::Other(
-                        "Invalid strategy 'deep_verif' for non-affine gadget".to_owned(),
-                    ),
-                ))?;
+                bail!("Invalid strategy 'deep_verif' for non-affine gadget");
             }
             let gg = raw_internals::GadgetGates::from_gadget(gadget)?;
             let ugg = gg.unroll(controls)?;
@@ -122,7 +113,7 @@ fn check_gadget<'a, 'b>(
             println!("Checking gadget {}...", gadget_name);
             assert_eq!(gadget.strat, netlist::GadgetStrat::CompositeProp);
             println!("computing internals...");
-            let gadget_internals = GadgetInternals::from_module(gadget, gadgets)?;
+            let gadget_internals = GadgetInternals::<'a, 'b>::from_module(gadget, gadgets)?;
             println!("internals computed");
             gadget_internals.check_sharings()?;
             println!("Sharings preserved: ok.");
@@ -220,7 +211,7 @@ fn check_gadget_top<'a>(
     simu: &mut impl std::io::BufRead,
     root_simu_mod: Vec<String>,
     config: &'a config::Config,
-) -> Result<(), CompErrors<'a>> {
+) -> Result<()> {
     let gadget_name = config.gname.as_ref();
     let gadgets = gadgets::netlist2gadgets(netlist)?;
     println!("checking gadget {:?}", gadget_name);
@@ -243,36 +234,26 @@ fn check_gadget_top<'a>(
     let max_delay_output = if let Some(g) = gadgets.get(&gadgets::GKind::from(gadget_name)) {
         g.max_output_lat()
     } else {
-        return Err(CompError {
-            module: None,
-            net: None,
-            kind: CompErrorKind::Other(format!(
-                "Cannot find gadget {} in the netlist. Does it have the fv_prop annotation ?",
-                gadget_name
-            )),
-        }
-        .into());
+        bail!(format!(
+            "Cannot find gadget {} in the netlist. Does it have the fv_prop annotation ?",
+            gadget_name
+        ));
     };
     if (max_delay_output + 1 > n_cycles)
         || (max_delay_output + 1 >= n_cycles && !config.no_check_state_cleared)
     {
-        return Err(CompError {
-            module: Some(&netlist.modules[gadget_name]),
-            net: None,
-            kind: CompErrorKind::Other(format!(
-                "Not enough simulated cycles to check the top-level gadget.\n\
+        bail!(format!(
+            "Not enough simulated cycles to check the top-level gadget.\n\
                  Note: number of simulated cycles should be at least maximum output delay{}.\n\
                  Note: max_out_delay: {}, n_cycles: {}.",
-                if !config.no_check_state_cleared {
-                    " + 2 (since we are checking if state is cleared after last output)"
-                } else {
-                    " + 1"
-                },
-                max_delay_output,
-                n_cycles
-            )),
-        }
-        .into());
+            if !config.no_check_state_cleared {
+                " + 2 (since we are checking if state is cleared after last output)"
+            } else {
+                " + 1"
+            },
+            max_delay_output,
+            n_cycles
+        ));
     }
 
     let g_graph = check_gadget(
@@ -330,7 +311,7 @@ fn check_gadget_top<'a>(
 
         // Cache verification result.
         gadgets_checked
-            .entry(sg_name.to_owned())
+            .entry(sg_name)
             .or_insert_with(Vec::new)
             .push(sg_controls.lookups());
     }
@@ -351,7 +332,6 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut file_simu = BufReader::new(file_simu);
     let netlist = yosys::Netlist::from_reader(file_synth)?;
     let root_simu_mod = signal_path(&[], config.tb.as_str());
-    check_gadget_top(&netlist, &mut file_simu, root_simu_mod, &config)
-        .map_err(|e| format!("{}", e))?;
+    check_gadget_top(&netlist, &mut file_simu, root_simu_mod, &config)?;
     Ok(())
 }
