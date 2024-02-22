@@ -2,7 +2,7 @@
 WORK ?= work
 SMAESH_ROOT ?= ./SMAesH
 
-FULLVERIF ?= ../fullverif-check/target/release/fullverif
+FULLVERIF ?= ../fullverif-check/target/debug/fullverif
 YOSYS ?= yosys
 IVERILOG ?= iverilog
 VVP ?= vvp
@@ -37,7 +37,7 @@ all: fullverif
 $(JSON):
 	-rm -r $(HDL_DIR)
 	OUT_DIR=$(HDL_DIR) $(HDL_ROOT_DIR)/gather_sources.sh aes_enc128_32bits_hpc2
-	OUT_DIR=$(WORK) MAIN_MODULE=$(MAIN_MODULE) IMPLEM_DIR=$(HDL_DIR) $(YOSYS) -c $(SMAESH_ROOT)/formal_verif/msk_presynth.tcl
+	OUT_DIR=$(WORK) MAIN_MODULE=$(MAIN_MODULE) IMPLEM_DIR=$(HDL_DIR) $(YOSYS) -c msk_presynth.tcl
 
 $(VCD_PATH): $(JSON)
 	make -C $(BEH_SIMU_DIR) tv
@@ -58,6 +58,6 @@ $(VCD_PATH): $(JSON)
 	$(VVP) $(SIM_PATH)
 
 fullverif: $(VCD_PATH) $(JSON)
-	$(FULLVERIF) --json $(JSON) --vcd $(VCD_PATH) --tb $(TB_MODULE) --gname $(MAIN_MODULE) --in-valid $(IN_VALID) --clock $(CLOCK) --dut $(DUT)
+	$(FULLVERIF) --json $(JSON) --vcd $(VCD_PATH) --tb $(TB_MODULE) --gname $(MAIN_MODULE) --in-valid $(IN_VALID) --clock $(CLOCK) --dut $(DUT) --output-vcd $(WORK)/out.vcd
 
 .PHONY: fullverif

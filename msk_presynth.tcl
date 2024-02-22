@@ -15,6 +15,7 @@ set OUT_DIR $::env(OUT_DIR)
 
 set MAIN_PATH $IMPLEM_DIR/$MAIN_MODULE.v
 set TECHMAP_PATH $FULLVERIF_LIB_DIR/techmap.v
+set LIB [file normalize [info script]]
 
 # Read verilog, load sub-modules and build the hierarchy.
 yosys verilog_defaults -add -I$IMPLEM_DIR -I$FULLVERIF_LIB_DIR
@@ -23,9 +24,11 @@ yosys hierarchy -check -libdir $IMPLEM_DIR -libdir $FULLVERIF_LIB_DIR -top $MAIN
 
 # Remove verilog high-level constructs, in favor of netlists
 yosys proc;
-# Map some 'high-level' modules coming from verilog constructs to lower level modules.
-# e.g. array indexing is mapped to a 'shiftx' at the previous step, we lower it now to muxes
+# Map yosys RTL library to yosys Gate library.
 yosys techmap
+# Map gates to our "fv_cells" library.
+yosys dfflibmap -liberty $LIB/fv_lib.lib
+yosys abc -liberty $LIB/fv_lib.lib
 
 # Flatten all user-level module whose check strategy is 'flatten'
 yosys setattr -mod -set keep_hierarchy 1 *;

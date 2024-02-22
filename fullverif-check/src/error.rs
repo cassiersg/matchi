@@ -196,9 +196,9 @@ impl<'a> fmt::Display for CompError<'a> {
                 writeln!(f, "Multiple sources for net:")?;
                 for source in sources.iter() {
                     let src_a = match source {
-                        Connection::GadgetOutput { gadget_name, .. } => ASrc(
-                            &self.module.as_ref().unwrap().cells[*gadget_name.get()].attributes,
-                        ),
+                        Connection::GadgetOutput { gadget_name, .. } => {
+                            ASrc(&self.module.as_ref().unwrap().cells[*gadget_name].attributes)
+                        }
                         Connection::Input(sharing) => ASrc(
                             &self.module.as_ref().unwrap().netnames[sharing.port_name].attributes,
                         ),

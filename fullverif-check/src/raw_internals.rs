@@ -1,17 +1,14 @@
-#![allow(dead_code)]
-#![allow(unused_imports)]
 //! Internals of a composite gadgets: sub-gadgets, their connections, inputs and outputs
 //! connections, connections to the randomness.
 
 use crate::clk_vcd;
-use crate::error::{CompError, CompErrorKind, DBitVal};
-use crate::gadgets::{Gadget, Gadgets, Latency, Random, Sharing};
+use crate::error::{CompError, CompErrorKind};
+use crate::gadgets::{Gadget, Latency, Random, Sharing};
 use anyhow::bail;
 use anyhow::Result;
 use fnv::FnvHashMap as HashMap;
-use itertools::Itertools;
 use petgraph::{
-    graph::{self, NodeIndex},
+    graph::NodeIndex,
     visit::{EdgeRef, IntoNodeIdentifiers, IntoNodeReferences},
     Direction, Graph,
 };
@@ -46,15 +43,12 @@ pub enum BoolBinKind {
 impl BoolBinKind {
     fn from_str(s: &str) -> Option<Self> {
         match s {
-            "$and" | "$_AND_" => Some(Self::And),
-            "$_NAND_" => Some(Self::Nand),
-            "$or" | "$_OR_" => Some(Self::Or),
-            "$_NOR_" => Some(Self::Nor),
-            "$xor" | "$_XOR_" => Some(Self::Xor),
-            "$xnor" | "$_XNOR_" => Some(Self::Xnor),
-            "$_ANDNOT_" => Some(Self::AndNot),
-            "$_ORNOT_" => Some(Self::OrNot),
-            "$_NMUX_" => Some(Self::Nmux),
+            "AND" => Some(Self::And),
+            "NAND" => Some(Self::Nand),
+            "OR" => Some(Self::Or),
+            "NOR" => Some(Self::Nor),
+            "XOR" => Some(Self::Xor),
+            "XNOR" => Some(Self::Xnor),
             _ => None,
         }
     }
@@ -66,6 +60,7 @@ pub enum RawGate<Ctrl = yosys::BitVal> {
     Reg,
     Mux(Ctrl), // control signal
     Inv,
+    Buf,
     BoolBin(BoolBinKind),
 }
 
@@ -95,7 +90,6 @@ pub struct Edge<'a> {
 const A_EDGE: Edge<'static> = Edge { input_name: "A" };
 const B_EDGE: Edge<'static> = Edge { input_name: "B" };
 const D_EDGE: Edge<'static> = Edge { input_name: "D" };
-const Q_EDGE: Edge<'static> = Edge { input_name: "Q" };
 
 #[derive(Debug, Clone)]
 pub struct GadgetGates<'a, 'b> {
@@ -139,6 +133,7 @@ impl<'a: 'b, 'b> UnrolledGates<'a, 'b> {
             valid[node.index()] = match self.tgates[*node].0 {
                 GNode::Gate(RawGate::Reg, _)
                 | GNode::Gate(RawGate::Inv, _)
+                | GNode::Gate(RawGate::Buf, _)
                 | GNode::Gate(RawGate::BoolBin(_), _) => self
                     .tgates
                     .neighbors_directed(*node, Direction::Incoming)
@@ -164,6 +159,7 @@ impl<'a: 'b, 'b> UnrolledGates<'a, 'b> {
             sensitive[node.index()] = match self.tgates[*node].0 {
                 GNode::Gate(RawGate::Reg, _)
                 | GNode::Gate(RawGate::Inv, _)
+                | GNode::Gate(RawGate::Buf, _)
                 | GNode::Gate(RawGate::BoolBin(_), _) => self
                     .tgates
                     .neighbors_directed(*node, Direction::Incoming)
@@ -246,7 +242,7 @@ impl<'a: 'b, 'b> UnrolledGates<'a, 'b> {
         let mut max_eprobes_output = Vec::<Vec<NodeIndex>>::new();
         let mut outputs = Vec::new();
         for (node, _gate) in self.tgates.node_references() {
-            if sensitive[dbg!(node.index())] {
+            if sensitive[node.index()] {
                 // Is only used as input of regs -> won't be extended more,
                 // let's put a probe on it.
                 let only_reg_uses = self
@@ -259,7 +255,6 @@ impl<'a: 'b, 'b> UnrolledGates<'a, 'b> {
                 } else {
                     false
                 };
-                dbg!((is_output, only_reg_uses));
                 // TODO handle transitions
                 if is_output {
                     max_eprobes_output.push(self.extend_probe(node));
@@ -306,6 +301,11 @@ impl<'a: 'b, 'b> UnrolledGates<'a, 'b> {
                 }
                 (GNode::Gate(RawGate::Inv, id), lat) => {
                     let n = cg.add_node(CGNode::Gate(BoolGate::Not, (id, lat)));
+                    cg.add_edge(mapped_gates[self.input(*node, "A").index()].unwrap(), n, ());
+                    mapped_gates[node.index()] = Some(n);
+                }
+                (GNode::Gate(RawGate::Buf, id), lat) => {
+                    let n = cg.add_node(CGNode::Gate(BoolGate::Buf, (id, lat)));
                     cg.add_edge(mapped_gates[self.input(*node, "A").index()].unwrap(), n, ());
                     mapped_gates[node.index()] = Some(n);
                 }
@@ -405,7 +405,7 @@ impl<'a, 'b> GadgetGates<'a, 'b> {
                     let cell = &gadget.module.cells[*cell_name];
                     let cell_type = cell.cell_type.as_str();
                     let output = match (cell_type, BoolBinKind::from_str(cell_type)) {
-                        ("$_DFF_P_", _) => {
+                        ("DFF", _) => {
                             assert_eq!(
                                 Some(&cell.connections["C"]),
                                 clock_bitval,
@@ -413,29 +413,15 @@ impl<'a, 'b> GadgetGates<'a, 'b> {
                             );
                             Some((RawGate::Reg, "Q"))
                         }
-                        ("$dff", _) => {
-                            assert_eq!(
-                                Some(&cell.connections["CLK"]),
-                                clock_bitval,
-                                "Wrong clock on random DFF"
-                            );
-                            let pol = &cell.parameters["CLK_POLARITY"];
-                            assert!(
-                                pol == &yosys::AttributeVal::S("1".to_string())
-                                    || pol == &yosys::AttributeVal::N(1),
-                                "Wrong clock polarity: {:?}",
-                                pol
-                            );
-                            Some((RawGate::Reg, "Q"))
-                        }
-                        ("$mux", _) => {
+                        ("MUX", _) => {
                             if *port_name == "S" {
                                 bail!("The wire {:?} depends on randomness or shares and drives the selector of the mux {}. This is not supported.", bitval, cell_name)
                             }
                             let ctrl = cell.connections["S"][*offset as usize];
                             Some((RawGate::Mux(ctrl), "Y"))
                         }
-                        ("$not", _) | ("$_NOT_", _) => Some((RawGate::Inv, "Y")),
+                        ("NOT", _) => Some((RawGate::Inv, "Y")),
+                        ("BUF", _) => Some((RawGate::Buf, "Y")),
                         (_, Some(kind)) => Some((RawGate::BoolBin(kind), "Y")),
                         _ => {
                             bail!("The cell {} (port {}[{}]) is connected to a random/sensitive wire but is not a known type of gate (type: {})", cell_name, port_name, offset, cell.cell_type)
@@ -459,6 +445,7 @@ impl<'a, 'b> GadgetGates<'a, 'b> {
                 let conn_names = match kind {
                     RawGate::Mux(_) | RawGate::BoolBin(_) => ["A", "B"].as_ref(),
                     RawGate::Inv => ["A"].as_ref(),
+                    RawGate::Buf => ["A"].as_ref(),
                     RawGate::Reg => ["D"].as_ref(),
                 };
                 let cell = &gadget.module.cells[id.cell];
@@ -527,6 +514,13 @@ impl<'a, 'b> GadgetGates<'a, 'b> {
                     GNode::Gate(RawGate::Inv, id) => {
                         if let Some(src) = new_nodes.get(&(self.input(*node, "A"), cycle)) {
                             let new_node = res.add_node((GNode::Gate(RawGate::Inv, id), cycle));
+                            res.add_edge(*src, new_node, A_EDGE);
+                            new_nodes.insert((*node, cycle), new_node);
+                        }
+                    }
+                    GNode::Gate(RawGate::Buf, id) => {
+                        if let Some(src) = new_nodes.get(&(self.input(*node, "A"), cycle)) {
+                            let new_node = res.add_node((GNode::Gate(RawGate::Buf, id), cycle));
                             res.add_edge(*src, new_node, A_EDGE);
                             new_nodes.insert((*node, cycle), new_node);
                         }
@@ -654,6 +648,7 @@ impl<'a, 'b> GadgetGates<'a, 'b> {
 #[derive(Debug, Clone)]
 pub enum BoolGate {
     Not,
+    Buf,
     Bin(BoolBinKind),
 }
 

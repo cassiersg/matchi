@@ -26,10 +26,13 @@ pub struct Config {
     #[arg(long("clock"))]
     /// Name of the clock signal in the testbench.
     pub clk: String,
-    #[arg(short, long)]
+    #[arg(long)]
+    /// Do not check transition leakage.
+    pub output_vcd: String,
+    #[arg(long)]
     /// Do not check for the presence of remaining secrets after the execution.
     pub no_check_state_cleared: bool,
-    #[arg(short, long)]
+    #[arg(long)]
     /// Do not check transition leakage.
     pub no_check_transitions: bool,
     #[arg(short, long)]

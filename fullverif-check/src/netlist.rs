@@ -203,6 +203,15 @@ pub enum GadgetStrat {
     DeepVerif,
 }
 
+//TODO: when checking transitions: check that all gadgets are pipeline.
+
+/// Structure of the evaluation of the gadget: Pipeline or not.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GadgetArch {
+    Loopy,
+    Pipeline,
+}
+
 /// Get values for the latency annotation of a port.
 fn get_latencies<'a>(
     module: &'a yosys::Module,
@@ -373,7 +382,7 @@ pub fn module_prop<'a>(module: &'a yosys::Module) -> Result<Option<GadgetProp>> 
 }
 
 /// Get the security proof strategy for the module.
-/// Returns Err if the annotation is invalid of missing.
+/// Returns Err if the annotation is invalid, Ok(None) if missing.
 pub fn module_strat<'a>(module: &'a yosys::Module) -> Result<Option<GadgetStrat>> {
     let Some(attr) = module.attributes.get("fv_strat") else {
         return Ok(None);
@@ -386,6 +395,22 @@ pub fn module_strat<'a>(module: &'a yosys::Module) -> Result<Option<GadgetStrat>
         attr => bail!(
             "TODO format {:?}",
             CompErrorKind::WrongAnnotation("fv_strat".to_owned(), attr.clone())
+        ),
+    }))
+}
+
+/// Get the architecture of a gadgets.
+/// Returns Err if the annotation is invalid, Ok(None) if missing.
+pub fn module_arch<'a>(module: &'a yosys::Module) -> Result<Option<GadgetArch>> {
+    let Some(attr) = module.attributes.get("fv_arch") else {
+        return Ok(None);
+    };
+    Ok(Some(match attr {
+        yosys::AttributeVal::S(attr) if attr == "loopy" => GadgetArch::Loopy,
+        yosys::AttributeVal::S(attr) if attr == "pipeline" => GadgetArch::Pipeline,
+        attr => bail!(
+            "TODO format {:?}",
+            CompErrorKind::WrongAnnotation("fv_arch".to_owned(), attr.clone())
         ),
     }))
 }

@@ -16,16 +16,22 @@ env_logger = "0.11"
 vcd = "0.7"
 yosys-netlist-json = "0.1.0"
 clap = { version = "4.4", features = ["derive"] }
-phantom_newtype = "0.2"
 derivative = "2.2"
 derive_more = "0.99"
 fnv = "1.0.7"
 
 anyhow = "1.0"
+index_vec = { git = "https://github.com/cassiersg/index_vec.git", branch = "const-slice" }
+indexmap = "2.2.2"
+bit-set = "0.5.3"
 
 #flame = { version = "0.2.2", optional = true }
 #flamer = { version = "0.3", optional = true }
 
+#[profile.dev]
+#opt-level = 1
+#debug = 0
+#strip = "debuginfo"
 #[profile.release]
 #debug = true
 #lto = true

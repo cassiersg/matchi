@@ -1,8 +1,9 @@
 //! Internals of a composite gadgets: sub-gadgets, their connections, inputs and outputs
 //! connections, connections to the randomness.
 
+use crate::composite_gadget::GadgetLibrary;
 use crate::error::{CompErrorKind, DBitVal};
-use crate::gadgets::{Gadget, Gadgets, Random, Sharing};
+use crate::gadgets::{Gadget, Random, Sharing};
 use anyhow::bail;
 use anyhow::Result;
 use fnv::FnvHashMap as HashMap;
@@ -11,7 +12,7 @@ use yosys_netlist_json as yosys;
 
 pub enum GInst {}
 /// Name of a gadget instance
-pub type GName<'a> = phantom_newtype::Id<GInst, &'a str>;
+pub type GName<'a> = &'a str;
 
 /// Source of a sharing inside a gadget: the output of another gadget instance or an input of the
 /// gadget.
@@ -121,7 +122,7 @@ impl<'a, 'b> GadgetInternals<'a, 'b> {
     /// Build internals from the module associated to the gadget
     pub fn from_module(
         gadget: &'b Gadget<'a>,
-        lib_gadgets: &'b Gadgets<'a>,
+        lib_gadgets: &'b GadgetLibrary<'a>,
     ) -> anyhow::Result<Self> {
         // List subgadgets.
         let mut subgadgets = HashMap::<GName<'a>, GadgetInstance<'a, 'b>>::default();
@@ -129,7 +130,7 @@ impl<'a, 'b> GadgetInternals<'a, 'b> {
         let mut module_cells: Vec<_> = gadget.module.cells.iter().collect();
         module_cells.sort_unstable_by_key(|&(name, _cell)| name);
         for (cell_name, cell) in module_cells {
-            if let Some(sg) = lib_gadgets.get(&cell.cell_type.as_str()) {
+            if let Some(sg) = lib_gadgets.get(&cell.cell_type) {
                 if sg.order != gadget.order {
                     bail!(
                         "TODO format {:?}",
@@ -262,7 +263,7 @@ impl<'a, 'b> GadgetInternals<'a, 'b> {
         // port, or none of the bits are shares.
         for (cell_name, cell) in gadget.module.cells.iter() {
             for (conn_name, conn) in cell.connections.iter() {
-                if let Some(gadget) = self.subgadgets.get(&cell_name.as_str().into()) {
+                if let Some(gadget) = self.subgadgets.get(cell_name.as_str()) {
                     if gadget.kind.has_port(conn_name) {
                         // this is a sharing, already checked that it is a correct sharing when
                         // building the internals of the module
@@ -305,7 +306,7 @@ impl<'a, 'b> GadgetInternals<'a, 'b> {
 /// Build the graph of the randomness manipulation gates in the composite gadget.
 fn module2randoms<'a>(
     gadget: &Gadget<'a>,
-    lib_gadgets: &Gadgets<'a>,
+    lib_gadgets: &crate::composite_gadget::GadgetLibrary<'a>,
 ) -> Result<(
     HashMap<RndGateId<'a>, RndGate<'a>>,
     HashMap<&'a yosys::BitVal, RndConnection<'a>>,
@@ -383,7 +384,7 @@ fn module2randoms<'a>(
                     }
                     _ => {
                         if lib_gadgets
-                            .get(&(*cell.cell_type.as_str()))
+                            .get(&cell.cell_type)
                             .map(|gadget| {
                                 !gadget.randoms.contains_key(&Random {
                                     port_name,
@@ -462,7 +463,7 @@ fn get_connection_bits<'a>(
     gadget: &Gadget<'a>,
     gadget_name: GName<'a>,
 ) -> &'a [yosys::BitVal] {
-    let connections = &gadget.module.cells[*gadget_name.get()].connections;
+    let connections = &gadget.module.cells[gadget_name].connections;
     let base = (sharing.pos * gadget.order) as usize;
     &connections[sharing.port_name][base..base + (gadget.order as usize)]
 }

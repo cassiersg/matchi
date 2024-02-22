@@ -56,7 +56,7 @@ impl CacheNameIds {
 
 impl VcdStates {
     /// Create VcdStates from a reader of a vcd file and the path of the clock signal.
-    pub fn new<'a>(r: &mut impl std::io::BufRead, clock: &[impl Borrow<str>]) -> Result<Self> {
+    pub fn new(r: &mut impl std::io::BufRead, clock: &[impl Borrow<str>]) -> Result<Self> {
         let mut parser = vcd::Parser::new(r);
         let Ok(header) = parser.parse_header() else {
             bail!("TODO format {:?}", CompError::no_mod(CompErrorKind::Vcd));
@@ -92,7 +92,7 @@ impl VcdStates {
     }
 
     /// VarId from the path (list of strings) of a variable
-    pub fn get_var_id<'a>(&self, path: &[impl Borrow<str>]) -> Result<VarId> {
+    pub fn get_var_id(&self, path: &[impl Borrow<str>]) -> Result<VarId> {
         let mut cache = self.cache_ids.borrow_mut();
         let mut dir: &mut CacheNameIds = &mut (*cache);
         let mut scope: &[vcd::ScopeItem] = &self.header.items;
@@ -172,7 +172,7 @@ impl VcdStates {
 
     /// State of a variable. Returns None if the cycle is too large compared to what was in the vcd.
     pub fn get_var(&self, var: VarId, cycle: usize) -> Option<&VarState> {
-        trace!("cycle: {}, n_cycles: {}", cycle, self.states.len());
+        //trace!("cycle: {}, n_cycles: {}", cycle, self.states.len());
         self.states.get(cycle).map(|state| &state[&var.0])
     }
 
@@ -208,7 +208,7 @@ pub type StateLookups = HashMap<(Vec<String>, usize, usize), Option<VarState>>;
 pub struct ModuleControls<'a> {
     vcd_states: &'a VcdStates,
     offset: usize,
-    root_module: Vec<String>,
+    pub root_module: Vec<String>,
     accessed: StateLookups,
 }
 
@@ -309,7 +309,7 @@ fn pad_vec_and_reverse(vec: vcd::Vector, size: u32) -> Vec<vcd::Value> {
 }
 
 /// Computes the state from the vcd reader, the clock and the list of variables.
-fn clocked_states<'a>(
+fn clocked_states(
     vars: &HashMap<vcd::IdCode, vcd::Var>,
     clock: vcd::IdCode,
     commands: impl Iterator<Item = Result<vcd::Command>>,

@@ -119,7 +119,7 @@ where
     for (idx, gadget) in gadgets {
         if gadget.base.kind.prop == netlist::GadgetProp::Mux {
             let sel_name = "sel".to_owned();
-            let path: Vec<String> = vec![(*(gadget.name.0).get()).to_owned(), sel_name.to_owned()];
+            let path: Vec<String> = vec![gadget.name.0.to_owned(), sel_name.to_owned()];
             let sel = controls
                 .lookup(path, gadget.name.1 as usize, 0)?
                 .unwrap_or_else(|| {
@@ -817,7 +817,7 @@ impl<'a, 'b> GadgetFlow<'a, 'b> {
                                 max_out_lat,
                                 gadget.name.1,
                                 out_lat,
-                                (*gadget.name.0.get()).to_owned(),
+                                gadget.name.0.to_owned(),
                                 e.weight().output,
                             ),
                         )))

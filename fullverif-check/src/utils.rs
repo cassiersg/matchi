@@ -60,3 +60,31 @@ pub fn format_set<T: Int>(it: impl Iterator<Item = T>) -> String {
     }
     res
 }
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct ShareId(u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShareSet(u64);
+
+impl ShareSet {
+    pub fn empty() -> Self {
+        Self(0)
+    }
+    pub fn from(x: ShareId) -> Self {
+        assert!(x.0 < 64);
+        Self(1 << x.0)
+    }
+    pub fn union(self, rhs: Self) -> Self {
+        Self(self.0 | rhs.0)
+    }
+    pub fn intersection(self, rhs: Self) -> Self {
+        Self(self.0 & rhs.0)
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+    pub fn contains(&self, x: ShareId) -> bool {
+        !self.intersection(Self::from(x)).is_empty()
+    }
+}

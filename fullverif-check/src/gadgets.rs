@@ -1,7 +1,7 @@
 //! Interface of a gadget: its security properties, its input and output signals.
 
 use crate::error::{CompError, CompErrorKind};
-use crate::netlist::{self, GadgetProp, GadgetStrat, WireAttrs};
+use crate::netlist::{self, GadgetArch, GadgetProp, GadgetStrat, WireAttrs};
 use anyhow::{bail, Result};
 use fnv::FnvHashMap as HashMap;
 use yosys_netlist_json as yosys;
@@ -33,7 +33,7 @@ pub type Input<'a> = (Sharing<'a>, Latency);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Gadget<'a> {
     /// Name of the module
-    pub name: GKind<'a>,
+    pub name: &'a str,
     /// Verilog module netlist
     pub module: &'a yosys::Module,
     /// Name of the clock signal
@@ -48,20 +48,17 @@ pub struct Gadget<'a> {
     pub prop: GadgetProp,
     /// Strategy to be used to prove the security
     pub strat: GadgetStrat,
+    /// Structure: Pipeline or Loopy
+    pub arch: GadgetArch,
     /// Masking order
     pub order: u32,
+    pub ports: crate::composite_gadget::ConnectionVec<(&'a str, usize)>,
+    pub output_ports: Vec<crate::composite_gadget::ConnectionId>,
+    pub input_ports: crate::composite_gadget::InputVec<crate::composite_gadget::ConnectionId>,
 }
 
-/// The name of a gadget.
-//pub type GKind<'a> = phantom_newtype::Id<Gadget<'a>, &'a str>;
-// TODO fix.
-pub type GKind<'a> = &'a str;
-
-/// A series of gadget declarations
-pub type Gadgets<'a> = HashMap<GKind<'a>, Gadget<'a>>;
-
 /// Convert a module to a gadget.
-fn module2gadget<'a>(module: &'a yosys::Module, name: &'a str) -> Result<Option<Gadget<'a>>> {
+pub fn module2gadget<'a>(module: &'a yosys::Module, name: &'a str) -> Result<Option<Gadget<'a>>> {
     let prop = if let Some(prop) = netlist::module_prop(module)? {
         prop
     } else if let Ok(None) = netlist::module_strat(module) {
@@ -79,7 +76,37 @@ fn module2gadget<'a>(module: &'a yosys::Module, name: &'a str) -> Result<Option<
             CompErrorKind::MissingAnnotation("fv_strat".to_owned())
         );
     };
+    let arch = netlist::module_arch(module)?.unwrap_or_else(|| {
+        warn!(
+            "Gadget {} has no fv_arch annotation, assuming 'pipeline'.",
+            name
+        );
+        GadgetArch::Pipeline
+    });
     let order = netlist::module_order(module)?;
+    let mut module_ports: Vec<_> = module.ports.iter().collect();
+    module_ports.sort_unstable_by_key(|&(name, _port)| name);
+    let ports = module_ports
+        .iter()
+        .flat_map(|(port_name, port)| {
+            (0..port.bits.len()).map(|offset| (port_name.as_str(), offset))
+        })
+        .collect::<crate::composite_gadget::ConnectionVec<_>>();
+    let port_filter = |direction| {
+        ports
+            .iter_enumerated()
+            .filter_map(|(id, (port_name, offset))| {
+                (module.ports[*port_name].direction == direction).then_some(id)
+            })
+            .collect::<Vec<_>>()
+    };
+    let input_ports =
+        crate::composite_gadget::InputVec::from_vec(port_filter(yosys::PortDirection::Input));
+    let output_ports = port_filter(yosys::PortDirection::Output);
+    let inout_ports = port_filter(yosys::PortDirection::InOut);
+    if !inout_ports.is_empty() {
+        bail!("Gadgets cannot have inout ports.");
+    }
     // Initialize gadget.
     let mut res = Gadget {
         name,
@@ -90,11 +117,13 @@ fn module2gadget<'a>(module: &'a yosys::Module, name: &'a str) -> Result<Option<
         randoms: HashMap::default(),
         prop,
         strat,
+        arch,
         order,
+        ports,
+        input_ports,
+        output_ports,
     };
     // Classify ports of the gadgets.
-    let mut module_ports: Vec<_> = module.ports.iter().collect();
-    module_ports.sort_unstable_by_key(|&(name, _port)| name);
     for (port_name, port) in module_ports {
         match (netlist::net_attributes(module, port_name)?, port.direction) {
             (WireAttrs::Sharing { latencies, count }, dir @ yosys::PortDirection::Input)
@@ -185,23 +214,6 @@ fn module2gadget<'a>(module: &'a yosys::Module, name: &'a str) -> Result<Option<
     Ok(Some(res))
 }
 
-/// Convert a netlist to a list of gadgets.
-pub fn netlist2gadgets(netlist: &yosys::Netlist) -> Result<HashMap<GKind, Gadget>> {
-    let mut netlist_modules: Vec<_> = netlist.modules.iter().collect();
-    netlist_modules.sort_unstable_by_key(|&(name, _module)| name);
-    let res = netlist_modules
-        .into_iter()
-        .filter_map(|(module_name, module)| {
-            (|| {
-                Ok(module2gadget(module, module_name)?
-                    .map(|gadget| (module_name.as_str().into(), gadget)))
-            })()
-            .transpose()
-        })
-        .collect::<Result<HashMap<_, _>>>()?;
-    Ok(res)
-}
-
 impl<'a> Gadget<'a> {
     /// Test if the gadget is annotated as PINI.
     pub fn is_pini(&self) -> bool {
@@ -260,5 +272,13 @@ impl<'a> Gadget<'a> {
     pub fn has_port(&self, port_name: &str) -> bool {
         let port = Sharing { port_name, pos: 0 };
         self.inputs.contains_key(&port) || self.outputs.contains_key(&port)
+    }
+
+    pub fn connections(&self) -> Vec<(&str, usize)> {
+        self.module
+            .ports
+            .iter()
+            .flat_map(|(port_name, port)| (0..port.bits.len()).map(|i| (port_name.as_str(), i)))
+            .collect()
     }
 }
