@@ -11,6 +11,7 @@ use super::{ModuleId, Netlist};
 use crate::type_utils::ExtendIdx;
 use anyhow::{anyhow, bail, Context, Error, Result};
 use itertools::izip;
+use std::collections::VecDeque;
 use std::fmt::Write;
 
 #[derive(Debug, Clone)]
@@ -23,13 +24,70 @@ pub struct Simulator {
 pub struct RndStatus {
     fresh_uses: Vec<(GlobInstId, Latency)>,
     leaks: Vec<(GlobInstId, Latency)>,
+    last_stored: Option<Latency>,
+}
+
+/// Conceptually equivalent to LatencyVec<RndStatus>,
+/// but is able to throw away outdated elements at the front of the vec.
+/// An element is outdated if its last_stored is too old.
+/// but behaves as a Deque that auto-prunes
+#[derive(Debug, Clone)]
+struct RndTracker {
+    offset: Latency,
+    states: VecDeque<RndStatus>,
+}
+
+impl RndTracker {
+    fn new() -> Self {
+        Self {
+            offset: Latency::from_usize(0),
+            states: VecDeque::new(),
+        }
+    }
+    fn index_of(&mut self, lat: Latency) -> usize {
+        assert!(
+            lat >= self.offset,
+            "lat: {}, self.offset: {}",
+            lat,
+            self.offset
+        );
+        let index = (lat - self.offset).index();
+        while index >= self.states.len() {
+            self.states.push_back(RndStatus::default());
+        }
+        index
+    }
+    fn get(&mut self, lat: Latency) -> &RndStatus {
+        let index = self.index_of(lat);
+        &self.states[index]
+    }
+    fn get_mut(&mut self, lat: Latency) -> &mut RndStatus {
+        let index = self.index_of(lat);
+        &mut self.states[index]
+    }
+    fn iter_enumerated(&self) -> impl Iterator<Item = (Latency, &RndStatus)> + '_ {
+        self.states
+            .iter()
+            .enumerate()
+            .map(|(i, rnd_status)| (self.offset + Latency::from_usize(i), rnd_status))
+    }
+    fn prune(&mut self, up_to: Latency) {
+        while self.offset < up_to && !self.states.is_empty() {
+            self.offset += 1;
+            self.states.pop_front();
+        }
+        if self.states.is_empty() {
+            self.offset = up_to;
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct GlobSimulationState {
     // FIXME: instead of LatencyVec, uses something with state pruning.
-    random_status: RndPortVec<LatencyVec<RndStatus>>,
-    current_lat: Latency,
+    //random_status: RndPortVec<LatencyVec<RndStatus>>,
+    random_status: RndPortVec<RndTracker>,
+    current_lat: Option<Latency>,
     pub last_det_exec: NspgiVec<Slatency>,
 }
 
@@ -102,7 +160,15 @@ impl Simulator {
         inputs: &InputVec<WireState>,
         netlist: &Netlist,
     ) -> Result<SimulationState> {
-        glob_state.current_lat += 1;
+        if let Some(cur_lat) = glob_state.current_lat {
+            for rnd_tracker in glob_state.random_status.iter_mut() {
+                rnd_tracker.prune(cur_lat);
+            }
+            glob_state.current_lat = Some(cur_lat + 1);
+        } else {
+            glob_state.current_lat = Some(Latency::from_raw(0));
+        }
+
         let mut eval_state = self.evaluator.init_next(&prev_state.eval_state, netlist);
         for (input_id, input_state) in inputs.iter_enumerated() {
             if input_state.random.is_some() {
@@ -140,11 +206,8 @@ impl Simulator {
     fn new_glob_state(&self, netlist: &Netlist) -> GlobSimulationState {
         let gadget = netlist.gadget(self.module_id).unwrap();
         GlobSimulationState {
-            random_status: RndPortVec::from_vec(vec![
-                LatencyVec::from_vec(vec![]);
-                gadget.rnd_ports.len()
-            ]),
-            current_lat: Latency::from_usize(0),
+            random_status: RndPortVec::from_vec(vec![RndTracker::new(); gadget.rnd_ports.len()]),
+            current_lat: None,
             last_det_exec: NspgiVec::new(),
         }
     }
@@ -161,28 +224,31 @@ impl SimulationState {
 }
 
 impl GlobSimulationState {
-    fn grow_random(&mut self, rnd_source: &RandomSource) {
-        let rnd_status = &mut self.random_status[rnd_source.port];
-        while rnd_status.len() <= rnd_source.lat {
-            rnd_status.push(RndStatus::default());
-        }
-    }
     pub fn leak_random(&mut self, wire: &WireState, inst: GlobInstId) {
         if let Some(rnd_source) = wire.random.as_ref() {
-            self.grow_random(rnd_source);
-            let rnd_status = &mut self.random_status[rnd_source.port];
-            rnd_status[rnd_source.lat].leak(inst, self.current_lat);
+            let cur_lat = self.cur_lat();
+            self.random_status[rnd_source.port]
+                .get_mut(rnd_source.lat)
+                .leak(inst, cur_lat);
         }
     }
     pub fn use_random(&mut self, wire: &WireState, inst: GlobInstId, cycle_offset: Latency) {
         if let Some(rnd_source) = wire.random.as_ref() {
-            self.grow_random(rnd_source);
-            let rnd_status = &mut self.random_status[rnd_source.port];
-            rnd_status[rnd_source.lat].fresh_use(inst, self.current_lat - cycle_offset);
+            let cur_lat = self.cur_lat();
+            self.random_status[rnd_source.port]
+                .get_mut(rnd_source.lat)
+                .fresh_use(inst, cur_lat - cycle_offset);
+        }
+    }
+    pub fn store_random(&mut self, wire: &WireState) {
+        if let Some(rnd_source) = wire.random.as_ref() {
+            self.random_status[rnd_source.port]
+                .get_mut(rnd_source.lat)
+                .last_stored = Some(self.cur_lat());
         }
     }
     pub fn cur_lat(&self) -> Latency {
-        self.current_lat
+        self.current_lat.unwrap()
     }
     pub fn nspgi_det_exec(&mut self, nspgi_id: NspgiId) {
         self.last_det_exec.extend_idx(nspgi_id, Slatency::MIN);

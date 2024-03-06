@@ -413,7 +413,12 @@ impl Evaluator for GateEvaluator {
                 let ops = state.inputs[2].as_ref().unwrap();
                 super::simulation::sim_mux(op0, op1, ops, sim_state, self.inst_id)
             }
-            Gate::Dff => state.prev_inputs[1].clone().unwrap_or(WireState::control()),
+            Gate::Dff => {
+                if let Some(wire_state) = state.inputs[1].as_ref() {
+                    sim_state.store_random(wire_state);
+                }
+                state.prev_inputs[1].clone().unwrap_or(WireState::control())
+            }
         }
     }
     fn eval_finish(
