@@ -18,6 +18,9 @@ pub struct Config {
     /// Main gadget module name.
     pub gname: String,
     #[arg(long)]
+    /// Name of the enable signal in the testbench.
+    pub enable_sig: String,
+    #[arg(long)]
     /// Name of the in_valid signal in the testbench.
     pub in_valid: String,
     #[arg(long)]

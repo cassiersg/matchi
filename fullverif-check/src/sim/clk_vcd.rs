@@ -1,12 +1,14 @@
 //! Analysis of vcd files as a series of state, for each clock cycle.
 
+// FIXME: extract only top-level I/O.
+
 use crate::error::{CompError, CompErrorKind};
 use anyhow::{bail, Result};
 use fnv::FnvHashMap as HashMap;
 use std::borrow::Borrow;
 
 /// State of a circuit at one clock cycle.
-pub type State = HashMap<vcd::IdCode, VarState>;
+pub type State = Vec<VarState>;
 
 /// State of a variable at one clock cycle.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,7 +30,7 @@ impl VarState {
 
 /// Id of a variable (for lookup into State)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct VarId(vcd::IdCode);
+pub struct VarId(usize);
 
 /// States of a circuit over time.
 #[derive(Debug)]
@@ -36,6 +38,7 @@ pub struct VcdStates {
     header: vcd::Header,
     states: Vec<State>,
     cache_ids: std::cell::RefCell<CacheNameIds>,
+    idcode2var_id: HashMap<vcd::IdCode, VarId>,
 }
 
 /// Cache for lookups of path -> ids.
@@ -70,9 +73,10 @@ impl VcdStates {
                 )))
             })?
             .code;
-        let vars = list_vars(&header);
+        let (idcode2var_id, vars) = list_vars(&header);
         let states = clocked_states(
-            &vars,
+            &idcode2var_id,
+            vars.as_slice(),
             clock,
             parser.map(|cmd| {
                 cmd.map_err(|_| {
@@ -88,7 +92,12 @@ impl VcdStates {
             header,
             states,
             cache_ids,
+            idcode2var_id,
         })
+    }
+
+    fn code2var(&self, code: vcd::IdCode) -> VarId {
+        self.idcode2var_id[&code]
     }
 
     /// VarId from the path (list of strings) of a variable
@@ -106,7 +115,7 @@ impl VcdStates {
                     }
                     vcd::ScopeItem::Var(v) => {
                         if path_part == path.len() - 1 {
-                            return Ok(VarId(v.code));
+                            return Ok(self.code2var(v.code));
                         } else {
                             // error
                             break;
@@ -145,7 +154,7 @@ impl VcdStates {
                                 }
                                 vcd::ScopeItem::Var(v) => {
                                     if path_part == path.len() - 1 {
-                                        return Ok(VarId(v.code));
+                                        return Ok(self.code2var(v.code));
                                     } else {
                                         // error
                                         break;
@@ -173,7 +182,7 @@ impl VcdStates {
     /// State of a variable. Returns None if the cycle is too large compared to what was in the vcd.
     pub fn get_var(&self, var: VarId, cycle: usize) -> Option<&VarState> {
         //trace!("cycle: {}, n_cycles: {}", cycle, self.states.len());
-        self.states.get(cycle).map(|state| &state[&var.0])
+        self.states.get(cycle).map(|state| &state[var.0 as usize])
     }
 
     /// State of a wire in a vector variable. Returns None if the cycle is too large compared to
@@ -290,6 +299,15 @@ impl<'a> ModuleControls<'a> {
     pub fn len(&self) -> usize {
         self.vcd_states.len() - self.offset
     }
+
+    pub fn first_asserted(&mut self, path: Vec<String>, idx: usize) -> Result<usize> {
+        for i in 0..self.len() {
+            if self.lookup(path.clone(), i, idx)?.unwrap() == VarState::Scalar(vcd::Value::V1) {
+                return Ok(i);
+            }
+        }
+        bail!("Error: Enable signal {:?} never asserted.", path.join("."))
+    }
 }
 
 /// Maps the state of a vector signal from the vcd (truncated, BE) to the representation used in
@@ -310,15 +328,14 @@ fn pad_vec_and_reverse(vec: vcd::Vector, size: u32) -> Vec<vcd::Value> {
 
 /// Computes the state from the vcd reader, the clock and the list of variables.
 fn clocked_states(
-    vars: &HashMap<vcd::IdCode, vcd::Var>,
+    code2var_id: &HashMap<vcd::IdCode, VarId>,
+    vars: &[vcd::Var],
     clock: vcd::IdCode,
     commands: impl Iterator<Item = Result<vcd::Command>>,
 ) -> Result<Vec<State>> {
     let mut states = Vec::new();
-    let mut current_state = vars
-        .keys()
-        .map(|code| (*code, VarState::Uninit))
-        .collect::<HashMap<_, _>>();
+    let mut current_state = vec![VarState::Uninit; vars.len()];
+    //let mut previous_state = current_state.clone();
     let mut previous_state = current_state.clone();
     let mut clk_state = vcd::Value::X;
     let mut started = false;
@@ -347,13 +364,12 @@ fn clocked_states(
                         }
                     }
                 }
-                current_state.insert(id_code, VarState::Scalar(value));
+                current_state[code2var_id[&id_code].0] = VarState::Scalar(value);
             }
             vcd::Command::ChangeVector(id_code, value) => {
-                current_state.insert(
-                    id_code,
-                    VarState::Vector(pad_vec_and_reverse(value, vars[&id_code].size)),
-                );
+                let var_id = code2var_id[&id_code];
+                current_state[var_id.0] =
+                    VarState::Vector(pad_vec_and_reverse(value, vars[var_id.0].size));
             }
             vcd::Command::Timestamp(_) => {
                 previous_state = current_state.clone();
@@ -366,7 +382,7 @@ fn clocked_states(
 }
 
 /// List the variables in the vcd.
-fn list_vars(header: &vcd::Header) -> HashMap<vcd::IdCode, vcd::Var> {
+fn list_vars(header: &vcd::Header) -> (HashMap<vcd::IdCode, VarId>, Vec<vcd::Var>) {
     let mut res = HashMap::default();
     let mut remaining_items = header.items.iter().collect::<Vec<_>>();
     while let Some(scope_item) = remaining_items.pop() {
@@ -380,5 +396,11 @@ fn list_vars(header: &vcd::Header) -> HashMap<vcd::IdCode, vcd::Var> {
             _ => {}
         }
     }
-    res
+    let (id_codes, vars): (Vec<_>, Vec<_>) = res.into_iter().unzip();
+    let code2var_id = id_codes
+        .into_iter()
+        .enumerate()
+        .map(|(i, code)| (code, VarId(i)))
+        .collect();
+    (code2var_id, vars)
 }

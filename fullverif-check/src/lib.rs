@@ -1,6 +1,6 @@
-use crate::gadget_internals::GadgetInternals;
 use crate::gadgets::Latency;
 use crate::utils::format_set;
+use crate::{gadget_internals::GadgetInternals, sim::recsim::Evaluator};
 
 use anyhow::{anyhow, bail, Context, Result};
 
@@ -220,7 +220,7 @@ fn check_gadget_top<'a>(
     let gadget_name = config.gname.as_str();
     let netlist_sim: sim::Netlist = netlist.try_into()?;
     let clk_path = signal_path(root_simu_mod.as_slice(), config.clk.as_str());
-    let in_valid_path = signal_path(root_simu_mod.as_slice(), config.in_valid.as_str());
+    let in_valid_path = signal_path(root_simu_mod.as_slice(), config.enable_sig.as_str());
     let dut_path = signal_path(root_simu_mod.as_slice(), config.dut.as_str());
 
     println!("initializing sim vcd states...");
@@ -231,25 +231,29 @@ fn check_gadget_top<'a>(
     // Simulation using sim::recsim
     if true {
         dbg!("Starting simu");
-        let sim_controls = sim::clk_vcd::ModuleControls::new(&sim_vcd_states, dut_path.clone(), 0);
+        let mut sim_controls =
+            sim::clk_vcd::ModuleControls::new(&sim_vcd_states, dut_path.clone(), 0);
         let module_id = netlist_sim.id_of(gadget_name).unwrap();
-        let evaluator = sim::recsim::InstanceEvaluator::new(module_id, &netlist_sim, vec![]);
-        let mut sim_states = vec![];
-        let mut sim_states_iter = evaluator.simu(sim_controls, &netlist_sim, false);
+        let simulator = sim::top_sim::Simulator::new(module_id, &netlist_sim);
+        let start_exec_offset = sim_controls.first_asserted(vec![config.in_valid.clone()], 0)?;
+        let sim_inputs = (0..).map(|t| {
+            simulator.gadget_vcd_inputs(&mut sim_controls, t, start_exec_offset, &netlist_sim)
+        });
+        let mut sim_states_iter = simulator.simu(sim_inputs, &netlist_sim, None);
         let mut vcd_write_file =
             std::io::BufWriter::new(std::fs::File::create(&config.output_vcd)?);
         let mut vcd_writer = sim::vcd_writer::VcdWriter::new(
             &mut vcd_write_file,
-            config.dut.clone(),
+            dut_path.last().unwrap().clone(),
             netlist_sim.id_of(gadget_name).unwrap(),
             &netlist_sim,
             netlist,
         )?;
         for i in 0..(dbg!(n_cycles) - 1) {
             println!("Simu cycle {}/{}", i + 1, n_cycles);
-            let new_state = sim_states_iter.next().unwrap()?;
-            vcd_writer.new_state(&new_state)?;
-            sim_states.push(new_state);
+            sim_states_iter = sim_states_iter.next()?.unwrap();
+            sim_states_iter.check()?;
+            vcd_writer.new_state(sim_states_iter.state())?;
         }
         dbg!("Simu done");
     }

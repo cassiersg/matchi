@@ -1,9 +1,11 @@
 use super::fv_cells::Gate;
+use super::gadget::{Latency, LatencyVec, StaticGadget};
 use super::netlist::Netlist;
 use super::ModuleId;
 use crate::type_utils::new_id;
 use anyhow::{anyhow, bail, Context, Result};
 use fnv::FnvHashMap as HashMap;
+use index_vec::Idx;
 use std::collections::BTreeSet;
 use yosys_netlist_json as yosys;
 
@@ -11,26 +13,44 @@ new_id!(InstanceId, InstanceVec, InstanceSlice);
 new_id!(WireId, WireVec, WireSlice);
 new_id!(ConnectionId, ConnectionVec, ConnectionSlice);
 new_id!(InputId, InputVec, InputSlice);
+new_id!(OutputId, OutputVec, OutputSlice);
 
 /// Contains ConnectionId.
 pub type ConnectionSet = bit_set::BitSet;
-type Ports = ConnectionVec<(String, usize)>;
+type Ports = ConnectionVec<WireName>;
 
 #[derive(Debug, Clone)]
 pub struct Module {
-    id: ModuleId,
+    pub id: ModuleId,
     pub name: String,
-    clock: Option<ConnectionId>,
+    pub clock: Option<ConnectionId>,
     pub instances: InstanceVec<Instance>,
     instance_names: HashMap<String, InstanceId>,
     pub wires: WireVec<WireProperties>,
     pub connection_wires: ConnectionVec<WireId>,
-    pub ports: ConnectionVec<(String, usize)>,
+    // FIXME: make (String, usize) its own struct that implements Display.
+    pub ports: ConnectionVec<WireName>,
     pub input_ports: InputVec<ConnectionId>,
-    pub output_ports: Vec<ConnectionId>,
+    pub output_ports: OutputVec<ConnectionId>,
     comb_input_deps: WireVec<Vec<InputId>>,
-    pub wire_names: WireVec<Option<(String, usize)>>,
+    pub wire_names: WireVec<Option<WireName>>,
     pub comb_wire_dag: WireGraph,
+}
+
+#[derive(Debug, Clone)]
+pub struct WireName {
+    pub name: String,
+    pub offset: usize,
+}
+impl WireName {
+    pub fn new(name: String, offset: usize) -> Self {
+        Self { name, offset }
+    }
+}
+impl std::fmt::Display for WireName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}[{}]", self.name, self.offset)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -130,7 +150,7 @@ struct Input {
 
 #[derive(Debug, Clone)]
 pub struct WireProperties {
-    pub source: (InstanceId, ConnectionId),
+    pub source: (InstanceId, OutputId),
     pub output: Option<ConnectionId>,
     pub sinks: Vec<(InstanceId, InputId)>,
 }
@@ -154,8 +174,11 @@ impl Module {
             &ports,
             yosys::PortDirection::Input,
         ));
-        let output_ports =
-            yosys_ext::filter_ports(yosys_module, &ports, yosys::PortDirection::Output);
+        let output_ports = OutputVec::from_vec(yosys_ext::filter_ports(
+            yosys_module,
+            &ports,
+            yosys::PortDirection::Output,
+        ));
         let inout_ports =
             yosys_ext::filter_ports(yosys_module, &ports, yosys::PortDirection::InOut);
         if !inout_ports.is_empty() {
@@ -245,13 +268,37 @@ impl Module {
     fn comb_input_deps(&self, connection: ConnectionId) -> &[InputId] {
         self.comb_input_deps[self.connection_wires[connection]].as_slice()
     }
+    /// Add dependencies in comb_wire_dag and comb_input_deps to match worst-case inference based
+    /// on gadget annotations.
+    /// TODO: document this assumption.
+    pub fn update_pipeline_gadget_deps(&mut self, gadget: &StaticGadget) {
+        assert_eq!(gadget.arch, super::gadget::GadgetArch::Pipeline);
+        let mut inputs_by_latency =
+            LatencyVec::from_vec(vec![vec![]; (gadget.max_latency + 1usize).into()]);
+        for (input_id, con_id) in self.input_ports.iter_enumerated() {
+            if Some(*con_id) != self.clock {
+                inputs_by_latency[gadget.valid_latencies[*con_id][0]].push(input_id);
+            }
+        }
+        for con_id in self.output_ports.iter() {
+            for input_id in &inputs_by_latency[gadget.valid_latencies[*con_id][0]] {
+                self.comb_wire_dag.graph.add_edge(
+                    self.comb_wire_dag.node_indices
+                        [self.connection_wires[self.input_ports[*input_id]]],
+                    self.comb_wire_dag.node_indices[self.connection_wires[*con_id]],
+                    (),
+                );
+                self.comb_input_deps[self.connection_wires[*con_id]].push(*input_id);
+            }
+        }
+    }
 }
 
 /// Unitility functions for yosys modules.
 mod yosys_ext {
     use super::{
         ConnectionId, ConnectionVec, Instance, InstanceType, InstanceVec, Netlist, Ports, WireId,
-        WireProperties, WireValue, WireVec,
+        WireName, WireProperties, WireValue, WireVec,
     };
     use anyhow::Result;
     use yosys_netlist_json as yosys;
@@ -264,7 +311,7 @@ mod yosys_ext {
             .iter()
             .flat_map(|port_name| {
                 (0..yosys_module.ports[*port_name].bits.len())
-                    .map(|offset| ((*port_name).clone(), offset))
+                    .map(|offset| WireName::new((*port_name).clone(), offset))
             })
             .collect::<ConnectionVec<_>>()
     }
@@ -276,8 +323,8 @@ mod yosys_ext {
     ) -> Vec<ConnectionId> {
         ports
             .iter_enumerated()
-            .filter_map(|(id, (port_name, _offset))| {
-                (yosys_module.ports[port_name].direction == direction).then_some(id)
+            .filter_map(|(id, wire_name)| {
+                (yosys_module.ports[&wire_name.name].direction == direction).then_some(id)
             })
             .collect::<Vec<_>>()
     }
@@ -318,21 +365,28 @@ mod yosys_ext {
             .collect()
     }
 
-    pub fn cell_connection_wires(
+    pub fn cell_connection_wires<'a>(
+        cell: &'a yosys::Cell,
+        connection_names: impl IntoIterator<Item = &'a WireName>,
+    ) -> Result<ConnectionVec<WireId>> {
+        cell_connection_wires_ref(
+            cell,
+            connection_names
+                .into_iter()
+                .map(|wire_name| (&wire_name.name, wire_name.offset)),
+        )
+    }
+    pub fn cell_connection_wires_ref(
         cell: &yosys::Cell,
         connection_names: impl IntoIterator<Item = (impl AsRef<str>, usize)>,
     ) -> Result<ConnectionVec<WireId>> {
         connection_names
             .into_iter()
-            .map(|(wire, offset)| cell.connections[wire.as_ref()][offset].try_into())
+            .map(|(port_name, offset)| cell.connections[port_name.as_ref()][offset].try_into())
             .collect()
     }
-    pub fn port_desc2wire_id(
-        module: &yosys::Module,
-        port_name: &str,
-        offset: usize,
-    ) -> Result<WireId> {
-        module.ports[port_name].bits[offset].try_into()
+    pub fn port_desc2wire_id(module: &yosys::Module, wire_name: &WireName) -> Result<WireId> {
+        module.ports[&wire_name.name].bits[wire_name.offset].try_into()
     }
 
     /// Number of wires in module, and check that they are consecutively numbered
@@ -362,7 +416,7 @@ mod yosys_ext {
     ) -> Result<ConnectionVec<WireId>> {
         ports
             .iter()
-            .map(|(port_name, offset)| port_desc2wire_id(module, port_name, *offset))
+            .map(|wire_name| port_desc2wire_id(module, wire_name))
             .collect()
     }
 
@@ -370,13 +424,12 @@ mod yosys_ext {
     pub fn wires_output_connection(
         module: &yosys::Module,
         n_wires: usize,
-        output_ports: &Vec<ConnectionId>,
+        output_ports: &super::OutputVec<ConnectionId>,
         ports: &Ports,
     ) -> Result<super::WireVec<Option<ConnectionId>>> {
         let mut wires_output = super::WireVec::from_vec(vec![None; n_wires]);
         for con_id in output_ports {
-            let (port_name, offset) = &ports[*con_id];
-            let wire_id = port_desc2wire_id(module, port_name, *offset)?;
+            let wire_id = port_desc2wire_id(module, &ports[*con_id])?;
             wires_output[wire_id] = Some(*con_id);
         }
         Ok(wires_output)
@@ -385,12 +438,12 @@ mod yosys_ext {
     pub fn wire_names(
         module: &yosys::Module,
         wires: &WireVec<WireProperties>,
-    ) -> WireVec<Option<(String, usize)>> {
+    ) -> WireVec<Option<WireName>> {
         let mut res = WireVec::from_vec(vec![None; wires.len()]);
         for (name, netname) in module.netnames.iter() {
             for (offset, bitval) in netname.bits.iter().enumerate() {
                 let wire_id: WireId = (*bitval).try_into().unwrap();
-                res[wire_id] = Some((name.clone(), offset));
+                res[wire_id] = Some(WireName::new(name.clone(), offset));
             }
         }
         res
@@ -410,12 +463,22 @@ impl InstanceType {
             )
         })
     }
-    fn output_ports<'nl>(&self, netlist: &'nl Netlist) -> &'nl [ConnectionId] {
+    fn output_ids(&self, netlist: &Netlist) -> std::ops::Range<OutputId> {
+        let n_outputs = match self {
+            InstanceType::Gate(gate) => gate.output_ports().len(),
+            InstanceType::Module(module_id) => netlist[*module_id].output_ports.len(),
+            InstanceType::Input(..) | InstanceType::Tie(_) => 1,
+        };
+        OutputId::from_usize(0)..OutputId::from_usize(n_outputs)
+    }
+    fn output_ports<'nl>(&self, netlist: &'nl Netlist) -> &'nl OutputSlice<ConnectionId> {
         const INPUT_GATE_OUTPUT_PORTS: [ConnectionId; 1] = [ConnectionId::from_raw_unchecked(0)];
         match self {
             InstanceType::Gate(gate) => gate.output_ports(),
             InstanceType::Module(module_id) => netlist[*module_id].output_ports.as_slice(),
-            InstanceType::Input(..) | InstanceType::Tie(_) => INPUT_GATE_OUTPUT_PORTS.as_slice(),
+            InstanceType::Input(..) | InstanceType::Tie(_) => {
+                OutputSlice::new(&INPUT_GATE_OUTPUT_PORTS)
+            }
         }
     }
     fn input_ports<'nl>(&self, netlist: &'nl Netlist) -> &'nl InputSlice<ConnectionId> {
@@ -463,14 +526,12 @@ impl Instance {
     fn from_cell(cell: &yosys::Cell, name: &str, netlist: &Netlist) -> Result<Self> {
         let architecture = InstanceType::from_cell(cell, netlist)?;
         let connections = match architecture {
-            InstanceType::Gate(gate) => yosys_ext::cell_connection_wires(cell, gate.connections())?,
-            InstanceType::Module(module_id) => yosys_ext::cell_connection_wires(
-                cell,
-                netlist[module_id]
-                    .ports
-                    .iter()
-                    .map(|(name, offset)| (name, *offset)),
-            )?,
+            InstanceType::Gate(gate) => {
+                yosys_ext::cell_connection_wires_ref(cell, gate.connections())?
+            }
+            InstanceType::Module(module_id) => {
+                yosys_ext::cell_connection_wires(cell, netlist[module_id].ports.iter())?
+            }
             InstanceType::Input(..) | InstanceType::Tie(_) => unreachable!(),
         };
         Ok(Instance {
@@ -487,11 +548,10 @@ impl Instance {
     ) -> Result<Self> {
         let connection_id = input_ports[input_id];
         let architecture = InstanceType::Input(input_id, connection_id);
-        let (port_name, offset) = &ports[connection_id];
-        let connection = yosys_ext::port_desc2wire_id(yosys_module, port_name, *offset)?;
+        let connection = yosys_ext::port_desc2wire_id(yosys_module, &ports[connection_id])?;
         let connections = ConnectionVec::from_vec(vec![connection]);
         Ok(Instance {
-            name: format!("input:{}[{}]", port_name, offset),
+            name: format!("input:{}", ports[connection_id]),
             architecture,
             connections,
         })
@@ -517,10 +577,14 @@ fn wires_source(
     n_wires: usize,
     instances: &InstanceVec<Instance>,
     netlist: &Netlist,
-) -> Result<WireVec<(InstanceId, ConnectionId)>> {
-    let mut sources = WireVec::<Option<(InstanceId, ConnectionId)>>::from_vec(vec![None; n_wires]);
+) -> Result<WireVec<(InstanceId, OutputId)>> {
+    let mut sources = WireVec::<Option<(InstanceId, OutputId)>>::from_vec(vec![None; n_wires]);
     for (instance_id, instance) in instances.iter_enumerated() {
-        for output_port in instance.architecture.output_ports(netlist) {
+        for (output_id, output_port) in instance
+            .architecture
+            .output_ports(netlist)
+            .iter_enumerated()
+        {
             let wire = instance.connections[*output_port];
             if let Some(other_instance) = sources[wire] {
                 bail!(
@@ -530,7 +594,7 @@ fn wires_source(
                     instance.name
                 );
             } else {
-                sources[wire] = Some((instance_id, *output_port));
+                sources[wire] = Some((instance_id, output_id));
             }
         }
     }
@@ -623,6 +687,7 @@ fn comb_depsets(
     for wire_id in eval_sorted_wires {
         let (instance_id, output_id) = &wires[*wire_id].source;
         let instance = &instances[*instance_id];
+        let output_con_id = instance.architecture.output_ports(netlist)[*output_id];
         //eprintln!("wire {} from instance {}", wire_id, instance.name);
         let mut dep_set = ConnectionSet::new();
         if let InstanceType::Input(_, con_id) = instance.architecture {
@@ -630,7 +695,7 @@ fn comb_depsets(
         } else {
             for con_input_id in instance
                 .architecture
-                .comb_deps(*output_id, netlist)?
+                .comb_deps(output_con_id, netlist)?
                 .as_ref()
             {
                 /*

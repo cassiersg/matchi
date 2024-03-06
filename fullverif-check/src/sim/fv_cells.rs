@@ -1,4 +1,4 @@
-use super::module::{ConnectionId, InputSlice, WireValue};
+use super::module::{ConnectionId, InputSlice, OutputSlice, WireValue};
 use anyhow::{bail, Result};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +58,14 @@ impl Gate {
             Gate::Dff => ["C", "D", "Q"].as_slice(),
         }
     }
+    pub fn input_port_names(&self) -> &'static [&'static str] {
+        let port_names = self.port_names();
+        &port_names[..port_names.len() - 1]
+    }
+    pub fn output_port_name(&self) -> &'static str {
+        let port_names = self.port_names();
+        port_names[port_names.len() - 1]
+    }
     pub fn connections(&self) -> Vec<(&str, usize)> {
         self.port_names().iter().map(|p| (*p, 0)).collect()
     }
@@ -83,17 +91,17 @@ impl Gate {
             Gate::Dff => DFF_INPUTS.as_slice(),
         })
     }
-    pub fn output_ports(&self) -> &'static [ConnectionId] {
+    pub fn output_ports(&self) -> &'static OutputSlice<ConnectionId> {
         const UNITARY_OUTPUTS: [ConnectionId; 1] = [ConnectionId::from_raw_unchecked(1)];
         const BINARY_OUTPUTS: [ConnectionId; 1] = [ConnectionId::from_raw_unchecked(2)];
         const MUX_OUTPUTS: [ConnectionId; 1] = [ConnectionId::from_raw_unchecked(3)];
         const DFF_OUTPUTS: [ConnectionId; 1] = [ConnectionId::from_raw_unchecked(2)];
-        match self {
+        OutputSlice::from_slice(match self {
             Gate::CombUnitary(_) => UNITARY_OUTPUTS.as_slice(),
             Gate::CombBinary(_) => BINARY_OUTPUTS.as_slice(),
             Gate::Mux => MUX_OUTPUTS.as_slice(),
             Gate::Dff => DFF_OUTPUTS.as_slice(),
-        }
+        })
     }
     pub fn comb_deps(&self) -> &'static [ConnectionId] {
         const UNITARY_DEPS: [ConnectionId; 1] = [ConnectionId::from_raw_unchecked(0)];
@@ -134,6 +142,13 @@ impl CombBinary {
         match self {
             CombBinary::And => WireValue::_1,
             CombBinary::Or | CombBinary::Xor => WireValue::_0,
+        }
+    }
+    pub fn absorb(&self) -> Option<WireValue> {
+        match self {
+            CombBinary::And => Some(WireValue::_0),
+            CombBinary::Or => Some(WireValue::_1),
+            CombBinary::Xor => None,
         }
     }
     pub fn opx(&self, op0: Option<WireValue>, op1: Option<WireValue>) -> Option<WireValue> {

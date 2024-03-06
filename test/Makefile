@@ -13,7 +13,8 @@ TB_DIR=$(HDL_ROOT_DIR)/tb
 TB_PATH=$(TB_DIR)/$(TB_MODULE).v
 MAIN_MODULE=MSKaes_32bits_core
 # signal starting the first simulation cycle (i.e. latency == 0 for the main module), name in the testbench
-IN_VALID=dut.aes_valid_in
+ENABLE_SIG=dut.aes_valid_in
+IN_VALID=valid_in
 # clock signal (in the testbench)
 CLOCK=clk
 # name of the instance of the main module in the testbench
@@ -58,6 +59,6 @@ $(VCD_PATH): $(JSON)
 	$(VVP) $(SIM_PATH)
 
 fullverif: $(VCD_PATH) $(JSON)
-	$(FULLVERIF) --json $(JSON) --vcd $(VCD_PATH) --tb $(TB_MODULE) --gname $(MAIN_MODULE) --in-valid $(IN_VALID) --clock $(CLOCK) --dut $(DUT) --output-vcd $(WORK)/out.vcd
+	$(FULLVERIF) --json $(JSON) --vcd $(VCD_PATH) --tb $(TB_MODULE) --gname $(MAIN_MODULE) --enable-sig $(ENABLE_SIG) --in-valid $(IN_VALID) --clock $(CLOCK) --dut $(DUT) --output-vcd $(WORK)/out.vcd
 
 .PHONY: fullverif

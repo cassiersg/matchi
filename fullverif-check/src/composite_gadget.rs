@@ -345,7 +345,7 @@ impl InstanceType {
     fn output_ports<'gl, 'nl: 'gl>(&self, library: &'gl GadgetLibrary<'nl>) -> &'gl [ConnectionId] {
         const INPUT_GATE_OUTPUT_PORTS: [ConnectionId; 1] = [ConnectionId::from_raw_unchecked(0)];
         match self {
-            InstanceType::Gate(gate) => gate.output_ports(),
+            InstanceType::Gate(gate) => &gate.output_ports().raw,
             InstanceType::Gadget(gadget_id) => library.gadgets[*gadget_id].output_ports.as_slice(),
             InstanceType::Input(..) => INPUT_GATE_OUTPUT_PORTS.as_slice(),
         }

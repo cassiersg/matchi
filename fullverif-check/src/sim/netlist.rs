@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use super::fv_cells::Gate;
+use super::gadget::StaticGadget;
 use super::module::Module;
 use super::{ModuleId, ModuleVec};
 use fnv::FnvHashMap as HashMap;
@@ -10,6 +11,7 @@ use anyhow::{anyhow, bail, Context, Result};
 #[derive(Debug, Clone)]
 pub struct Netlist {
     modules: ModuleVec<Module>,
+    gadgets: ModuleVec<Option<StaticGadget>>,
     names: HashMap<String, ModuleId>,
 }
 
@@ -26,14 +28,19 @@ impl std::convert::TryFrom<&yosys::Netlist> for Netlist {
         dbg!(names.keys().collect::<Vec<_>>());
         let mut res = Netlist {
             modules: ModuleVec::with_capacity(names.len()),
+            gadgets: ModuleVec::with_capacity(names.len()),
             names,
         };
-        // FIXME re-order gadgets following a topological inclusion order.
         for (module_id, name) in netlist_modules.iter_enumerated() {
-            res.modules.push(
-                Module::from_yosys(&netlist.modules[*name], module_id, name, &res)
-                    .with_context(|| format!("Building composite_gadget for {}", name))?,
-            );
+            let module = Module::from_yosys(&netlist.modules[*name], module_id, name, &res)
+                .with_context(|| format!("Building netlist for module {}", name))?;
+            res.modules.push(module);
+            let gadget = StaticGadget::new(&res[module_id], &res, netlist)
+                .with_context(|| format!("Building gadget for module {}", name))?;
+            if gadget.as_ref().is_some_and(|gadget| gadget.is_pipeline()) {
+                res.modules[module_id].update_pipeline_gadget_deps(&gadget.as_ref().unwrap());
+            }
+            res.gadgets.push(gadget);
         }
         Ok(res)
     }
@@ -48,6 +55,9 @@ impl Netlist {
     }
     pub fn modules(&self) -> &ModuleVec<Module> {
         &self.modules
+    }
+    pub fn gadget(&self, module_id: ModuleId) -> Option<&StaticGadget> {
+        self.gadgets[module_id].as_ref()
     }
 }
 

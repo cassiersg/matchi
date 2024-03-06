@@ -13,7 +13,8 @@ log = { version = "0.4", features = [
     "release_max_level_info",
 ] }
 env_logger = "0.11"
-vcd = "0.7"
+#vcd = { git = "https://github.com/cassiersg/rust-vcd.git", branch = "idcode" }
+vcd = "0.7.0"
 yosys-netlist-json = "0.1.0"
 clap = { version = "4.4", features = ["derive"] }
 derivative = "2.2"
@@ -21,9 +22,10 @@ derive_more = "0.99"
 fnv = "1.0.7"
 
 anyhow = "1.0"
-index_vec = { git = "https://github.com/cassiersg/index_vec.git", branch = "const-slice" }
+index_vec = { git = "https://github.com/cassiersg/index_vec.git", branch = "checked-arithmetic" }
 indexmap = "2.2.2"
 bit-set = "0.5.3"
+enum_dispatch = "0.3.12"
 
 #flame = { version = "0.2.2", optional = true }
 #flamer = { version = "0.3", optional = true }
