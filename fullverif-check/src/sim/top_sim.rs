@@ -1,15 +1,13 @@
-use super::gadget::{InputRole, Latency, LatencyVec, RndPortVec, Slatency};
-use super::module::{
-    ConnectionId, InputId, InputVec, InstanceType, InstanceVec, OutputId, WireId, WireVec,
-};
+use super::gadget::{InputRole, Latency, RndPortVec, Slatency};
+use super::module::InputVec;
 use super::recsim::{
     EvalInstanceIds, Evaluator, EvaluatorState, GlobInstId, ModuleEvaluator, ModuleState, NspgiId,
     NspgiVec,
 };
-use super::simulation::{RandomSource, WireState};
+use super::simulation::WireState;
 use super::{ModuleId, Netlist};
 use crate::type_utils::ExtendIdx;
-use anyhow::{anyhow, bail, Context, Error, Result};
+use anyhow::{bail, Result};
 use itertools::izip;
 use std::collections::VecDeque;
 use std::fmt::Write;
@@ -57,10 +55,6 @@ impl RndTracker {
         }
         index
     }
-    fn get(&mut self, lat: Latency) -> &RndStatus {
-        let index = self.index_of(lat);
-        &self.states[index]
-    }
     fn get_mut(&mut self, lat: Latency) -> &mut RndStatus {
         let index = self.index_of(lat);
         &mut self.states[index]
@@ -84,10 +78,14 @@ impl RndTracker {
 
 #[derive(Debug, Clone)]
 pub struct GlobSimulationState {
-    // FIXME: instead of LatencyVec, uses something with state pruning.
-    //random_status: RndPortVec<LatencyVec<RndStatus>>,
+    /// For every top-level random port and every input latency, track where the corresponding
+    /// random value is leaked, used and stored.
     random_status: RndPortVec<RndTracker>,
-    current_lat: Option<Latency>,
+    /// Current simulated clock cycle.
+    current_cycle: Option<Latency>,
+    /// Last deterministic execution "pipeline bubble".
+    // FIXME: how is this working, when we actually do not consider a bubble if randomness if
+    // fresh?
     pub last_det_exec: NspgiVec<Slatency>,
 }
 
@@ -112,7 +110,6 @@ impl Simulator {
         &self,
         vcd: &mut super::clk_vcd::ModuleControls,
         time_offset: usize,
-        start_exec_offset: usize,
         netlist: &Netlist,
     ) -> Result<InputVec<WireState>> {
         let module = &netlist[self.module_id];
@@ -128,11 +125,11 @@ impl Simulator {
                     })
                     .to_bool()
                     .map(|v| v.into());
+                /*
                 let valid = time_offset >= start_exec_offset
                     && gadget.valid_latencies[*con_id]
                         .binary_search(&Latency::from_raw((time_offset - start_exec_offset) as u32))
                         .is_ok();
-                /*
                 eprintln!(
                     "gadget_vcd_inputs, time_offset: {}, start_exec_offset: {}, input {:?}, latencies: {:?}, valid: {}",
                 time_offset, start_exec_offset,
@@ -160,26 +157,17 @@ impl Simulator {
         inputs: &InputVec<WireState>,
         netlist: &Netlist,
     ) -> Result<SimulationState> {
-        if let Some(cur_lat) = glob_state.current_lat {
+        if let Some(cur_lat) = glob_state.current_cycle {
             for rnd_tracker in glob_state.random_status.iter_mut() {
                 rnd_tracker.prune(cur_lat);
             }
-            glob_state.current_lat = Some(cur_lat + 1);
+            glob_state.current_cycle = Some(cur_lat + 1);
         } else {
-            glob_state.current_lat = Some(Latency::from_raw(0));
+            glob_state.current_cycle = Some(Latency::from_raw(0));
         }
 
         let mut eval_state = self.evaluator.init_next(&prev_state.eval_state, netlist);
         for (input_id, input_state) in inputs.iter_enumerated() {
-            if input_state.random.is_some() {
-                let module = &netlist[self.module_id];
-                /*
-                eprintln!(
-                    "{:?}: {:?}",
-                    module.ports[module.input_ports[input_id]], input_state
-                );
-                */
-            }
             self.evaluator
                 .set_input(&mut eval_state, input_id, input_state.clone(), netlist);
         }
@@ -187,32 +175,22 @@ impl Simulator {
             .eval_finish(&mut eval_state, glob_state, netlist);
         Ok(self.new_state(eval_state, netlist))
     }
-    pub fn simu<'s, I>(
-        &'s self,
-        inputs: I,
-        netlist: &'s Netlist,
-        init_from_vcd: Option<super::clk_vcd::ModuleControls>,
-    ) -> SimuIter<'s, I>
+    pub fn simu<'s, I>(&'s self, inputs: I, netlist: &'s Netlist) -> SimuIter<'s, I>
     where
         I: Iterator<Item = Result<InputVec<WireState>>> + 's,
     {
-        let simu_state = if let Some(mut vcd) = init_from_vcd {
-            self.new_state(self.evaluator.state_from_vcd(&mut vcd, netlist), netlist)
-        } else {
-            self.new_state(self.evaluator.x_state(netlist), netlist)
-        };
+        let simu_state = self.new_state(self.evaluator.x_state(netlist), netlist);
         SimuIter::new(self, inputs, simu_state, netlist)
     }
     fn new_glob_state(&self, netlist: &Netlist) -> GlobSimulationState {
         let gadget = netlist.gadget(self.module_id).unwrap();
         GlobSimulationState {
             random_status: RndPortVec::from_vec(vec![RndTracker::new(); gadget.rnd_ports.len()]),
-            current_lat: None,
+            current_cycle: None,
             last_det_exec: NspgiVec::new(),
         }
     }
     fn new_state(&self, eval_state: EvaluatorState, netlist: &Netlist) -> SimulationState {
-        let gadget = netlist.gadget(self.module_id).unwrap();
         SimulationState { eval_state }
     }
 }
@@ -248,7 +226,7 @@ impl GlobSimulationState {
         }
     }
     pub fn cur_lat(&self) -> Latency {
-        self.current_lat.unwrap()
+        self.current_cycle.unwrap()
     }
     pub fn nspgi_det_exec(&mut self, nspgi_id: NspgiId) {
         self.last_det_exec.extend_idx(nspgi_id, Slatency::MIN);
@@ -316,7 +294,7 @@ where
                 if !status.fresh_uses.is_empty() && status.leaks.len() > 1 {
                     let wire_name =
                         &module.ports[module.input_ports[gadget.rnd_ports[rnd_port_id]]];
-                    let mut use_string = format!("As fresh randomness in:");
+                    let mut use_string = "As fresh randomness in:".to_owned();
                     let write_uses = |x: &Vec<(GlobInstId, Latency)>, s: &mut String| {
                         for (inst_id, inst_lat) in x {
                             write!(

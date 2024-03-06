@@ -1,6 +1,6 @@
 //! Analysis of vcd files as a series of state, for each clock cycle.
 
-// FIXME: extract only top-level I/O.
+// TODO: extract only top-level I/O.
 
 use crate::error::{CompError, CompErrorKind};
 use anyhow::{bail, Result};
@@ -103,7 +103,7 @@ impl VcdStates {
     /// VarId from the path (list of strings) of a variable
     pub fn get_var_id(&self, path: &[impl Borrow<str>]) -> Result<VarId> {
         let mut cache = self.cache_ids.borrow_mut();
-        let mut dir: &mut CacheNameIds = &mut (*cache);
+        let mut dir: &mut CacheNameIds = &mut cache;
         let mut scope: &[vcd::ScopeItem] = &self.header.items;
         for (path_part, name) in path.iter().enumerate() {
             let n = name.borrow();
@@ -182,7 +182,7 @@ impl VcdStates {
     /// State of a variable. Returns None if the cycle is too large compared to what was in the vcd.
     pub fn get_var(&self, var: VarId, cycle: usize) -> Option<&VarState> {
         //trace!("cycle: {}, n_cycles: {}", cycle, self.states.len());
-        self.states.get(cycle).map(|state| &state[var.0 as usize])
+        self.states.get(cycle).map(|state| &state[var.0])
     }
 
     /// State of a wire in a vector variable. Returns None if the cycle is too large compared to
@@ -204,7 +204,7 @@ impl VcdStates {
     }
 }
 
-// FIXME: could we replace the Vec<String> with a VarId for better efficiency ?
+// TODO: could we replace the Vec<String> with a VarId for better efficiency ?
 /// Records the path and the results of all the queries.
 pub type StateLookups = HashMap<(Vec<String>, usize, usize), Option<VarState>>;
 
@@ -235,41 +235,6 @@ impl<'a> ModuleControls<'a> {
         self.root_module.as_slice()
     }
 
-    /// Create a ModulesControls for the given root_module, with cycle 0 set to the first cycle
-    /// where tne enable signal is asserted.
-    /// The enable signal and root_module paths start at the vcd root.
-    pub fn from_enable<'b>(
-        vcd_states: &'a VcdStates,
-        root_module: Vec<String>,
-        enable: &[impl Borrow<str>],
-    ) -> Result<Self> {
-        let enable_code = vcd_states.get_var_id(enable)?;
-        let Some(offset) = (0..vcd_states.len()).find(|i| {
-            vcd_states.get_var(enable_code, *i).unwrap() == &VarState::Scalar(vcd::Value::V1)
-        }) else {
-            bail!(
-                "Error: Enable signal {:?} never asserted.",
-                enable.join(".")
-            )
-        };
-        debug!("ModuleControls offset: {}", offset);
-        Ok(Self::new(vcd_states, root_module, offset))
-    }
-
-    /// Create a fresh ModuleControls, incrementing the cycle offset by time_offset from the
-    /// current offset and selecting a sub-module path from the current one.
-    /// The StateLookups state of the new ModuleControls is empty.
-    pub fn submodule(&self, module: String, time_offset: usize) -> Self {
-        let mut path = self.root_module.clone();
-        path.push(module);
-        Self {
-            vcd_states: self.vcd_states,
-            offset: self.offset + time_offset,
-            root_module: path,
-            accessed: StateLookups::default(),
-        }
-    }
-
     /// Lookup the value of the wire path[idx] at the given cycle.
     /// Returns None when the cycle to be looked up is after the end of the vcd file.
     pub fn lookup(
@@ -290,23 +255,9 @@ impl<'a> ModuleControls<'a> {
             .clone())
     }
 
-    /// Returns the list of the lookups.
-    pub fn lookups(self) -> StateLookups {
-        self.accessed
-    }
-
     /// Number of cycles from the start of the module to the end of the vcd.
     pub fn len(&self) -> usize {
         self.vcd_states.len() - self.offset
-    }
-
-    pub fn first_asserted(&mut self, path: Vec<String>, idx: usize) -> Result<usize> {
-        for i in 0..self.len() {
-            if self.lookup(path.clone(), i, idx)?.unwrap() == VarState::Scalar(vcd::Value::V1) {
-                return Ok(i);
-            }
-        }
-        bail!("Error: Enable signal {:?} never asserted.", path.join("."))
     }
 }
 

@@ -235,16 +235,13 @@ fn check_gadget_top<'a>(
             sim::clk_vcd::ModuleControls::new(&sim_vcd_states, dut_path.clone(), 0);
         let module_id = netlist_sim.id_of(gadget_name).unwrap();
         let simulator = sim::top_sim::Simulator::new(module_id, &netlist_sim);
-        let start_exec_offset = sim_controls.first_asserted(vec![config.in_valid.clone()], 0)?;
-        let sim_inputs = (0..).map(|t| {
-            simulator.gadget_vcd_inputs(&mut sim_controls, t, start_exec_offset, &netlist_sim)
-        });
-        let mut sim_states_iter = simulator.simu(sim_inputs, &netlist_sim, None);
+        let sim_inputs =
+            (0..).map(|t| simulator.gadget_vcd_inputs(&mut sim_controls, t, &netlist_sim));
+        let mut sim_states_iter = simulator.simu(sim_inputs, &netlist_sim);
         let mut vcd_write_file =
             std::io::BufWriter::new(std::fs::File::create(&config.output_vcd)?);
         let mut vcd_writer = sim::vcd_writer::VcdWriter::new(
             &mut vcd_write_file,
-            dut_path.last().unwrap().clone(),
             netlist_sim.id_of(gadget_name).unwrap(),
             &netlist_sim,
             netlist,

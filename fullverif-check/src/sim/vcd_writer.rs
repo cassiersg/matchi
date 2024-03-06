@@ -1,6 +1,6 @@
 use super::module::{InstanceId, InstanceType, WireId, WireValue};
 use super::netlist::Netlist;
-use super::recsim::{EvaluatorState, ModuleState};
+use super::recsim::ModuleState;
 use super::simulation::WireState;
 use super::ModuleId;
 use crate::utils::ShareId;
@@ -16,7 +16,6 @@ pub struct VcdWriter<'w> {
     writer: vcd::Writer<&'w mut dyn std::io::Write>,
     representations: Vec<(RepresentationTarget, VcdModuleRepresentation)>,
     timestamp: u64,
-    nshares: u32,
     clock: vcd::IdCode,
     cycle_count: vcd::IdCode,
 }
@@ -97,7 +96,6 @@ impl VcdBuilder {
 impl<'w> VcdWriter<'w> {
     pub fn new(
         writer: &'w mut dyn std::io::Write,
-        top_scope: String,
         module_id: ModuleId,
         netlist: &Netlist,
         yosys_netlist: &yosys::Netlist,
@@ -137,7 +135,6 @@ impl<'w> VcdWriter<'w> {
             writer,
             representations,
             timestamp: 0,
-            nshares,
             clock,
             cycle_count,
         })

@@ -2,9 +2,8 @@ use super::module::{ConnectionVec, InputId, InputVec, OutputVec};
 use super::{ModuleId, Netlist};
 use crate::type_utils::new_id;
 use crate::utils::ShareId;
-use itertools::Itertools;
 
-use anyhow::{anyhow, bail, Context, Error, Result};
+use anyhow::{bail, Error, Result};
 
 use yosys_netlist_json as yosys;
 
@@ -36,7 +35,6 @@ new_id!(RndPortId, RndPortVec, RndPortSlice);
 #[derive(Clone, Debug)]
 pub struct StaticGadget {
     pub module_id: ModuleId,
-    name: String,
     pub input_roles: InputVec<InputRole>,
     pub output_roles: OutputVec<OutputRole>,
     pub max_latency: Latency,
@@ -201,7 +199,6 @@ impl StaticGadget {
             .collect::<RndPortVec<_>>();
         let res = Self {
             module_id: module.id,
-            name: module.name.clone(),
             input_roles,
             output_roles,
             rnd_ports,
@@ -215,9 +212,6 @@ impl StaticGadget {
         };
         res.check_pipeline(netlist)?;
         Ok(Some(res))
-    }
-    pub fn latencies(&self) -> impl Iterator<Item = Latency> {
-        (0..=self.max_latency.raw()).map(Latency::from_raw)
     }
     pub fn is_pipeline(&self) -> bool {
         self.arch == GadgetArch::Pipeline
@@ -253,7 +247,7 @@ impl StaticGadget {
 
 mod yosys_ext {
     use super::Latency;
-    use anyhow::{anyhow, bail, Context, Error, Result};
+    use anyhow::{anyhow, bail, Context, Result};
     use yosys_netlist_json as yosys;
 
     fn attr_display(attr: &yosys::AttributeVal) -> std::borrow::Cow<str> {
@@ -278,10 +272,6 @@ mod yosys_ext {
         } else {
             None
         })
-    }
-    pub fn get_int_module_attr_needed(module: &yosys::Module, attr: &str) -> Result<u32> {
-        get_int_module_attr(module, attr)?
-            .ok_or_else(|| anyhow!("Missing module attribute {attr}."))
     }
     pub fn get_str_module_attr<'m>(
         module: &'m yosys::Module,
@@ -316,11 +306,7 @@ mod yosys_ext {
             },
         )
     }
-    fn get_int_wire_attr_needed<'a>(
-        module: &'a yosys::Module,
-        netname: &str,
-        attr: &str,
-    ) -> Result<u32> {
+    fn get_int_wire_attr_needed(module: &yosys::Module, netname: &str, attr: &str) -> Result<u32> {
         get_int_wire_attr(module, netname, attr)?
             .ok_or_else(|| anyhow!("Missing attribute {attr} on wire {netname}."))
     }
@@ -332,8 +318,8 @@ mod yosys_ext {
         Clock,
     }
     /// Get the type of a port.
-    pub fn net_attributes<'a>(
-        module: &'a yosys::Module,
+    pub fn net_attributes(
+        module: &yosys::Module,
         netname: &str,
         nshares: u32,
     ) -> Result<WireAttrs> {

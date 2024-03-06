@@ -58,14 +58,6 @@ impl Gate {
             Gate::Dff => ["C", "D", "Q"].as_slice(),
         }
     }
-    pub fn input_port_names(&self) -> &'static [&'static str] {
-        let port_names = self.port_names();
-        &port_names[..port_names.len() - 1]
-    }
-    pub fn output_port_name(&self) -> &'static str {
-        let port_names = self.port_names();
-        port_names[port_names.len() - 1]
-    }
     pub fn connections(&self) -> Vec<(&str, usize)> {
         self.port_names().iter().map(|p| (*p, 0)).collect()
     }
@@ -131,13 +123,6 @@ impl Gate {
 }
 
 impl CombBinary {
-    pub fn op(&self, op0: WireValue, op1: WireValue) -> WireValue {
-        match self {
-            CombBinary::And => op0 & op1,
-            CombBinary::Or => op0 | op1,
-            CombBinary::Xor => op0 ^ op1,
-        }
-    }
     pub fn neutral(&self) -> WireValue {
         match self {
             CombBinary::And => WireValue::_1,

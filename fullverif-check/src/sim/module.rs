@@ -1,11 +1,10 @@
 use super::fv_cells::Gate;
-use super::gadget::{Latency, LatencyVec, StaticGadget};
+use super::gadget::{LatencyVec, StaticGadget};
 use super::netlist::Netlist;
 use super::ModuleId;
 use crate::type_utils::new_id;
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Result};
 use fnv::FnvHashMap as HashMap;
-use index_vec::Idx;
 use std::collections::BTreeSet;
 use yosys_netlist_json as yosys;
 
@@ -28,7 +27,6 @@ pub struct Module {
     instance_names: HashMap<String, InstanceId>,
     pub wires: WireVec<WireProperties>,
     pub connection_wires: ConnectionVec<WireId>,
-    // FIXME: make (String, usize) its own struct that implements Display.
     pub ports: ConnectionVec<WireName>,
     pub input_ports: InputVec<ConnectionId>,
     pub output_ports: OutputVec<ConnectionId>,
@@ -140,12 +138,6 @@ pub enum InstanceType {
     Module(ModuleId),
     Input(InputId, ConnectionId),
     Tie(WireValue),
-}
-
-#[derive(Debug, Clone)]
-struct Input {
-    port: String,
-    offset: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -462,14 +454,6 @@ impl InstanceType {
                 cell.cell_type
             )
         })
-    }
-    fn output_ids(&self, netlist: &Netlist) -> std::ops::Range<OutputId> {
-        let n_outputs = match self {
-            InstanceType::Gate(gate) => gate.output_ports().len(),
-            InstanceType::Module(module_id) => netlist[*module_id].output_ports.len(),
-            InstanceType::Input(..) | InstanceType::Tie(_) => 1,
-        };
-        OutputId::from_usize(0)..OutputId::from_usize(n_outputs)
     }
     fn output_ports<'nl>(&self, netlist: &'nl Netlist) -> &'nl OutputSlice<ConnectionId> {
         const INPUT_GATE_OUTPUT_PORTS: [ConnectionId; 1] = [ConnectionId::from_raw_unchecked(0)];

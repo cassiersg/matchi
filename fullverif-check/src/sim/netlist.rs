@@ -15,8 +15,6 @@ pub struct Netlist {
     names: HashMap<String, ModuleId>,
 }
 
-// FIXME check everything uses the same clock.
-
 impl std::convert::TryFrom<&yosys::Netlist> for Netlist {
     type Error = anyhow::Error;
     fn try_from(netlist: &yosys::Netlist) -> Result<Self> {

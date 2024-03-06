@@ -33,6 +33,7 @@ use std::rc::Rc;
 pub struct WireState {
     /// Set of sensitive shares.
     pub sensitivity: ShareSet,
+    // FIXME: what about glitches and transitions for randomness?
     /// Set of sensitive shares considering gliches.
     pub glitch_sensitivity: ShareSet,
     /// Value from the non-symbolic simulation. None represents 'x'.
@@ -201,7 +202,6 @@ impl CombBinary {
         } else {
             let sensitivity = op0.sensitivity.union(op1.sensitivity);
             let glitch_sensitivity = op0.glitch_sensitivity.union(op1.glitch_sensitivity);
-            // FIXME: handle glitches and randoms.
             let value = self.opx(op0.value, op1.value);
             sim_state.leak_random(op0, inst_id);
             sim_state.leak_random(op1, inst_id);
@@ -222,7 +222,6 @@ impl CombBinary {
         // FIXME: handle gating with stable deterministic value ?
         res.glitch_sensitivity = op0.glitch_sensitivity.union(op1.glitch_sensitivity);
         res
-        // FIXME: handle randomness transitions.
     }
 }
 pub fn sim_mux(
@@ -233,7 +232,6 @@ pub fn sim_mux(
     inst_id: GlobInstId,
 ) -> WireState {
     // FIXME: handle gating with stable deterministic value ?
-    // FIXME: handle glitches and randoms.
     op0.consistency_check();
     op1.consistency_check();
     ops.consistency_check();
@@ -242,11 +240,12 @@ pub fn sim_mux(
     } else if ops.is_control(WireValue::_1) {
         op1.clone().with_glitches(op0.glitch_sensitivity)
     } else {
-        // FIXME: here we are a bit pessimistic wrt randomness, some cases might not be leakage.
-        // FIXME: distinguish between leaking a random and using it in a sensitive gadget.
-        sim_state.leak_random(&op0, inst_id);
-        sim_state.leak_random(&op1, inst_id);
-        sim_state.leak_random(&ops, inst_id);
+        // Here we are a bit pessimistic wrt randomness, some cases might not be leakage, but that
+        // should not be an issue in practice: mux without deterministic control should not be used
+        // with randomness (outside "assumed" gadgets).
+        sim_state.leak_random(op0, inst_id);
+        sim_state.leak_random(op1, inst_id);
+        sim_state.leak_random(ops, inst_id);
         WireState {
             sensitivity: op0
                 .sensitivity
