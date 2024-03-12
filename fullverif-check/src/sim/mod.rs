@@ -7,8 +7,9 @@ pub mod recsim;
 pub mod simulation;
 pub mod top_sim;
 pub mod vcd_writer;
+mod wire_value;
 
-pub use module::WireValue;
+pub use wire_value::WireValue;
 
 use crate::type_utils::new_id;
 new_id!(ModuleId, ModuleVec, ModuleSlice);

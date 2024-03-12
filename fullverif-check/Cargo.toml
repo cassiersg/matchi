@@ -13,8 +13,8 @@ log = { version = "0.4", features = [
     "release_max_level_info",
 ] }
 env_logger = "0.11"
-#vcd = { git = "https://github.com/cassiersg/rust-vcd.git", branch = "idcode" }
-vcd = "0.7.0"
+vcd = { git = "https://github.com/cassiersg/rust-vcd.git", branch = "idcode" } # Merged, but not released yet.
+#vcd = "0.7.0"
 yosys-netlist-json = "0.1.0"
 clap = { version = "4.4", features = ["derive"] }
 derivative = "2.2"

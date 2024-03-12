@@ -1,8 +1,9 @@
-use super::module::{InstanceId, InstanceType, WireId, WireValue};
-use super::netlist::Netlist;
+use super::module::{InstanceId, InstanceType, WireId};
+use super::netlist::{ModList, Netlist};
 use super::recsim::ModuleState;
 use super::simulation::WireState;
 use super::ModuleId;
+use super::WireValue;
 use crate::utils::ShareId;
 use anyhow::Result;
 use yosys_netlist_json as yosys;
@@ -44,7 +45,7 @@ impl VcdBuilder {
         netlist: &Netlist,
         yosys_netlist: &yosys::Netlist,
     ) -> (vcd::Scope, VcdModuleRepresentation) {
-        let yosys_module = &yosys_netlist.modules[&netlist[module_id].name];
+        let yosys_module = &yosys_netlist.modules[&netlist.module(module_id).name];
         let mut scope = vcd::Scope::new(vcd::ScopeType::Module, format!("\\{}", instance));
         let mut idcodes = vec![];
         for (name, net) in yosys_module.netnames.iter() {
@@ -71,7 +72,8 @@ impl VcdBuilder {
                 .collect();
             idcodes.push((idcode, wire_ids));
         }
-        let cells = netlist[module_id]
+        let cells = netlist
+            .module(module_id)
             .instances
             .iter_enumerated()
             .filter_map(|(instance_id, instance)| {
@@ -101,7 +103,7 @@ impl<'w> VcdWriter<'w> {
         yosys_netlist: &yosys::Netlist,
     ) -> Result<Self> {
         let mut builder = VcdBuilder::new();
-        let nshares = netlist.gadget(module_id).unwrap().nshares;
+        let nshares = netlist.top_gadget.nshares;
         let mut writer = vcd::Writer::new(writer);
         let representation_targets = [
             RepresentationTarget::Value,

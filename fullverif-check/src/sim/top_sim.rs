@@ -1,5 +1,6 @@
-use super::gadget::{InputRole, Latency, RndPortVec, Slatency};
-use super::module::InputVec;
+use super::gadget::{Latency, PortRole, RndPortVec, Slatency};
+use super::module::{InputId, InputVec};
+use super::netlist::ModList;
 use super::recsim::{
     EvalInstanceIds, Evaluator, EvaluatorState, GlobInstId, ModuleEvaluator, ModuleState, NspgiId,
     NspgiVec,
@@ -7,7 +8,7 @@ use super::recsim::{
 use super::simulation::WireState;
 use super::{ModuleId, Netlist};
 use crate::type_utils::ExtendIdx;
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use itertools::izip;
 use std::collections::VecDeque;
 use std::fmt::Write;
@@ -16,6 +17,8 @@ use std::fmt::Write;
 pub struct Simulator {
     module_id: ModuleId,
     evaluator: ModuleEvaluator,
+    vcd_states: super::clk_vcd::VcdParsedStates,
+    input_vcd_ids: InputVec<super::clk_vcd::VarId>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -65,13 +68,18 @@ impl RndTracker {
             .enumerate()
             .map(|(i, rnd_status)| (self.offset + Latency::from_usize(i), rnd_status))
     }
-    fn prune(&mut self, up_to: Latency) {
-        while self.offset < up_to && !self.states.is_empty() {
+    /// Remove states whose last_stored is less than last_cycle
+    fn prune(&mut self, last_cycle: Latency) {
+        while self
+            .states
+            .front()
+            .is_some_and(|state| !state.last_stored.is_some_and(|last| last >= last_cycle))
+        {
             self.offset += 1;
             self.states.pop_front();
         }
         if self.states.is_empty() {
-            self.offset = up_to;
+            self.offset = last_cycle;
         }
     }
 }
@@ -84,8 +92,8 @@ pub struct GlobSimulationState {
     /// Current simulated clock cycle.
     current_cycle: Option<Latency>,
     /// Last deterministic execution "pipeline bubble".
-    // FIXME: how is this working, when we actually do not consider a bubble if randomness if
-    // fresh?
+    // FIXME: how is this working, when we actually do not consider a bubble if randomness is
+    // fresh? (implied by the "fully deterministic" requirement)
     pub last_det_exec: NspgiVec<Slatency>,
 }
 
@@ -95,8 +103,34 @@ pub struct SimulationState {
 }
 
 impl Simulator {
-    pub fn new(module_id: ModuleId, netlist: &Netlist) -> Self {
-        Self {
+    pub fn new(
+        netlist: &Netlist,
+        vcd_parser: vcd::Parser<impl std::io::BufRead>,
+        dut_path: &[String],
+    ) -> Result<Self> {
+        let module_id = netlist.top_gadget.module_id;
+        let module = netlist.module(module_id);
+        let mut clk_path = dut_path.to_owned();
+        clk_path.push(
+            module
+                .clock
+                .as_ref()
+                .ok_or_else(|| anyhow!("Top-level gadget must have a clock."))?
+                .name()
+                .to_owned(),
+        );
+        let mut vcd_parsed_header = super::clk_vcd::VcdParsedHeader::new(vcd_parser, &clk_path)?;
+        let input_vcd_ids = module
+            .input_ports
+            .iter()
+            .map(|con_id| {
+                let mut path = dut_path.to_owned();
+                path.push(module.ports[*con_id].name().to_owned());
+                vcd_parsed_header.add_var(&path)
+            })
+            .collect::<Result<InputVec<_>>>()?;
+        let vcd_states = vcd_parsed_header.get_states()?;
+        Ok(Self {
             module_id,
             evaluator: ModuleEvaluator::new(
                 module_id,
@@ -104,51 +138,48 @@ impl Simulator {
                 vec![],
                 &mut EvalInstanceIds::new(),
             ),
-        }
+            vcd_states,
+            input_vcd_ids,
+        })
     }
-    pub fn gadget_vcd_inputs(
-        &self,
-        vcd: &mut super::clk_vcd::ModuleControls,
-        time_offset: usize,
-        netlist: &Netlist,
-    ) -> Result<InputVec<WireState>> {
-        let module = &netlist[self.module_id];
-        let gadget = netlist.gadget(self.module_id).unwrap();
-        Ok(izip!(&module.input_ports, &gadget.input_roles,)
-            .map(|(con_id, input_role)| {
-                let wire_name = &module.ports[*con_id];
-                let value: Option<super::WireValue> = vcd
-                    .lookup(vec![wire_name.name.clone()], time_offset, wire_name.offset)
-                    .unwrap()
-                    .unwrap_or_else(|| {
-                        panic!("No value for {:?}, wire {}", vcd.root_module(), wire_name)
-                    })
-                    .to_bool()
-                    .map(|v| v.into());
-                /*
-                let valid = time_offset >= start_exec_offset
-                    && gadget.valid_latencies[*con_id]
-                        .binary_search(&Latency::from_raw((time_offset - start_exec_offset) as u32))
-                        .is_ok();
-                eprintln!(
-                    "gadget_vcd_inputs, time_offset: {}, start_exec_offset: {}, input {:?}, latencies: {:?}, valid: {}",
-                time_offset, start_exec_offset,
-                    module.ports[*con_id],
-                gadget.valid_latencies[*con_id], valid
-                );
-                        */
-                match input_role {
-                    InputRole::Share(id) => WireState::share(*id),
-                    // FIXME: randomness freshness/validity
-                    InputRole::Random(rnd_id) => {
-                        WireState::random(*rnd_id, Latency::from_usize(time_offset))
-                    }
-                    //.valid(time_offset >= start_exec_offset),
-                    InputRole::Control => WireState::control(),
-                }
-                .with_value(value)
-            })
-            .collect())
+    fn gadget_vcd_input_sequence<'a>(
+        &'a self,
+        netlist: &'a Netlist,
+        n_cycles: usize,
+    ) -> impl Iterator<Item = InputVec<WireState>> + 'a {
+        let module = netlist.module(self.module_id);
+        (0..n_cycles).map(move |t| {
+            module
+                .input_ports
+                .indices()
+                .map(|input_id| self.gadget_vcd_input(input_id, netlist, t))
+                .collect()
+        })
+    }
+    fn gadget_vcd_input(&self, input_id: InputId, netlist: &Netlist, cycle: usize) -> WireState {
+        let gadget = &netlist.top_gadget;
+        let value: Option<super::WireValue> = self
+            .vcd_states
+            .get_var(self.input_vcd_ids[input_id], cycle)
+            .to_bool()
+            .map(|v| v.into());
+        match &gadget.input_roles[input_id] {
+            PortRole::Share(id) => WireState::share(*id),
+            // FIXME: randomness freshness/validity
+            PortRole::Random(rnd_id) => WireState::random(*rnd_id, Latency::from_usize(cycle)),
+            //.valid(time_offset >= start_exec_offset),
+            PortRole::Control => WireState::control(),
+        }
+        .with_value(value)
+    }
+    pub fn simu<'s>(
+        &'s self,
+        netlist: &'s Netlist,
+        n_cycles: usize,
+    ) -> SimuIter<'s, impl Iterator<Item = InputVec<WireState>> + 's> {
+        let simu_state = self.new_state(self.evaluator.x_state(netlist), netlist);
+        let inputs = self.gadget_vcd_input_sequence(netlist, n_cycles);
+        SimuIter::new(self, inputs, simu_state, netlist)
     }
     fn next(
         &self,
@@ -172,18 +203,11 @@ impl Simulator {
                 .set_input(&mut eval_state, input_id, input_state.clone(), netlist);
         }
         self.evaluator
-            .eval_finish(&mut eval_state, glob_state, netlist);
+            .eval_finish(&mut eval_state, Some(glob_state), netlist);
         Ok(self.new_state(eval_state, netlist))
     }
-    pub fn simu<'s, I>(&'s self, inputs: I, netlist: &'s Netlist) -> SimuIter<'s, I>
-    where
-        I: Iterator<Item = Result<InputVec<WireState>>> + 's,
-    {
-        let simu_state = self.new_state(self.evaluator.x_state(netlist), netlist);
-        SimuIter::new(self, inputs, simu_state, netlist)
-    }
     fn new_glob_state(&self, netlist: &Netlist) -> GlobSimulationState {
-        let gadget = netlist.gadget(self.module_id).unwrap();
+        let gadget = &netlist.top_gadget;
         GlobSimulationState {
             random_status: RndPortVec::from_vec(vec![RndTracker::new(); gadget.rnd_ports.len()]),
             current_cycle: None,
@@ -192,6 +216,9 @@ impl Simulator {
     }
     fn new_state(&self, eval_state: EvaluatorState, netlist: &Netlist) -> SimulationState {
         SimulationState { eval_state }
+    }
+    pub fn n_cycles(&self) -> usize {
+        self.vcd_states.len()
     }
 }
 
@@ -245,7 +272,7 @@ pub struct SimuIter<'a, I> {
 
 impl<'a, I> SimuIter<'a, I>
 where
-    I: Iterator<Item = Result<InputVec<WireState>>> + 'a,
+    I: Iterator<Item = InputVec<WireState>> + 'a,
 {
     fn new(
         simulator: &'a Simulator,
@@ -269,7 +296,7 @@ where
         self.simu_state = self.simulator.next(
             &self.simu_state,
             &mut self.glob_state,
-            &inputs?,
+            &inputs,
             self.netlist,
         )?;
         Ok(Some(self))
@@ -280,26 +307,26 @@ where
     pub fn check(&mut self) -> Result<()> {
         self.simulator.evaluator.check_safe_finish(
             &mut self.simu_state.eval_state,
-            &mut self.glob_state,
+            Some(&mut self.glob_state),
             self.netlist,
         )?;
         self.check_random_uses()?;
         Ok(())
     }
     fn check_random_uses(&self) -> Result<()> {
-        let module = &self.netlist[self.simulator.module_id];
-        let gadget = self.netlist.gadget(self.simulator.module_id).unwrap();
+        let module = self.netlist.module(self.simulator.module_id);
+        let gadget = &self.netlist.top_gadget;
         for (rnd_port_id, rnd_uses) in self.glob_state.random_status.iter_enumerated() {
             for (lat, status) in rnd_uses.iter_enumerated() {
                 if !status.fresh_uses.is_empty() && status.leaks.len() > 1 {
                     let wire_name =
                         &module.ports[module.input_ports[gadget.rnd_ports[rnd_port_id]]];
-                    let mut use_string = "As fresh randomness in:".to_owned();
+                    let mut use_string = "\n\tAs fresh randomness in:".to_owned();
                     let write_uses = |x: &Vec<(GlobInstId, Latency)>, s: &mut String| {
                         for (inst_id, inst_lat) in x {
                             write!(
                                 s,
-                                "\n\t{} (at cycle {})",
+                                "\n\t\t{} (at cycle {})",
                                 self.simulator
                                     .evaluator
                                     .glob_inst2path(*inst_id, self.netlist)
@@ -315,7 +342,7 @@ where
                         write_uses(&status.leaks, &mut use_string);
                     }
                     bail!(
-                        "Random input {} at cycle {} is used in multiple places: {}.",
+                        "Random input {} at cycle {} is used in multiple places:{}.",
                         wire_name,
                         lat,
                         use_string,

@@ -32,7 +32,7 @@ impl<I: index_vec::Idx, T: Clone> ExtendIdx for index_vec::IndexVec<I, T> {
     type Value = T;
     fn extend_idx(&mut self, idx: Self::Index, value: Self::Value) {
         if self.len() <= idx.index() {
-            self.extend(std::iter::repeat(value).take((self.len() + 1) - idx.index()));
+            self.extend(std::iter::repeat(value).take(idx.index() + 1 - self.len()));
         }
     }
 }

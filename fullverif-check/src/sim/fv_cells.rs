@@ -1,4 +1,5 @@
-use super::module::{ConnectionId, InputSlice, OutputSlice, WireValue};
+use super::module::{ConnectionId, InputSlice, OutputSlice, WireName};
+use super::WireValue;
 use anyhow::{bail, Result};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,16 +51,20 @@ impl Gate {
     pub fn is_gate(s: impl AsRef<str>) -> bool {
         s.as_ref().parse::<Gate>().is_ok()
     }
-    fn port_names(&self) -> &'static [&'static str] {
+    pub fn connections(&self) -> &'static [WireName<&'static str>] {
+        const WA: WireName<&'static str> = WireName::single_port("A");
+        const WB: WireName<&'static str> = WireName::single_port("B");
+        const WS: WireName<&'static str> = WireName::single_port("S");
+        const WY: WireName<&'static str> = WireName::single_port("Y");
+        const WC: WireName<&'static str> = WireName::single_port("C");
+        const WD: WireName<&'static str> = WireName::single_port("D");
+        const WQ: WireName<&'static str> = WireName::single_port("Q");
         match self {
-            Gate::CombUnitary(_) => ["A", "Y"].as_slice(),
-            Gate::CombBinary(_) => ["A", "B", "Y"].as_slice(),
-            Gate::Mux => ["A", "B", "S", "Y"].as_slice(),
-            Gate::Dff => ["C", "D", "Q"].as_slice(),
+            Gate::CombUnitary(_) => [WA, WY].as_slice(),
+            Gate::CombBinary(_) => [WA, WB, WY].as_slice(),
+            Gate::Mux => [WA, WB, WS, WY].as_slice(),
+            Gate::Dff => [WC, WD, WQ].as_slice(),
         }
-    }
-    pub fn connections(&self) -> Vec<(&str, usize)> {
-        self.port_names().iter().map(|p| (*p, 0)).collect()
     }
     pub fn input_ports(&self) -> &'static InputSlice<ConnectionId> {
         const UNITARY_INPUTS: [ConnectionId; 1] = [ConnectionId::from_raw_unchecked(0)];
@@ -114,10 +119,10 @@ impl Gate {
             Gate::Dff => DFF_DEPS.as_slice(),
         }
     }
-    pub fn clock(&self) -> Option<ConnectionId> {
+    pub fn clock(&self) -> Option<WireName<&'static str>> {
         match self {
             Gate::CombUnitary(_) | Gate::CombBinary(_) | Gate::Mux => None,
-            Gate::Dff => Some(ConnectionId::from_usize(0)),
+            Gate::Dff => Some(WireName::single_port("C")),
         }
     }
 }

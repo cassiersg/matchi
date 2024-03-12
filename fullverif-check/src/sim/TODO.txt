@@ -1,0 +1,11 @@
+
+Handle input/output validity.
+
+- unused valid_in option
+
+- Top-level randomness validity.
+- Refactor gadgets:
+    * Pipeline "assume" PINI/O-PINI gadgets.
+    * Optimization: Fully-connected sharewise combinational
+    * Optimization: Pipeline composite gadget
+

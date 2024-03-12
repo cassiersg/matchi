@@ -116,6 +116,13 @@ impl ShareSet {
             }
         })
     }
+    pub fn clear_if(self, cond: bool) -> Self {
+        if cond {
+            Self::empty()
+        } else {
+            self
+        }
+    }
 }
 
 impl std::fmt::Display for ShareId {

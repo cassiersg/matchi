@@ -217,27 +217,20 @@ fn check_gadget_top<'a>(
     root_simu_mod: Vec<String>,
     config: &'a config::Config,
 ) -> Result<()> {
+    println!("building netlist...");
     let gadget_name = config.gname.as_str();
-    let netlist_sim: sim::Netlist = netlist.try_into()?;
-    let clk_path = signal_path(root_simu_mod.as_slice(), config.clk.as_str());
-    let in_valid_path = signal_path(root_simu_mod.as_slice(), config.enable_sig.as_str());
+    let netlist_sim = sim::Netlist::new(netlist, gadget_name)?;
     let dut_path = signal_path(root_simu_mod.as_slice(), config.dut.as_str());
 
     println!("initializing sim vcd states...");
-    let sim_vcd_states = sim::clk_vcd::VcdStates::new(&mut open_simu_vcd(config)?, &clk_path)?;
-    println!("...initialized!");
-    let sim_controls = sim::clk_vcd::ModuleControls::new(&sim_vcd_states, dut_path.clone(), 0);
-    let n_cycles = sim_controls.len() as gadgets::Latency;
+    let mut vcd_file = open_simu_vcd(config)?;
+    let vcd_parser = vcd::Parser::new(&mut vcd_file);
     // Simulation using sim::recsim
     if true {
-        dbg!("Starting simu");
-        let mut sim_controls =
-            sim::clk_vcd::ModuleControls::new(&sim_vcd_states, dut_path.clone(), 0);
-        let module_id = netlist_sim.id_of(gadget_name).unwrap();
-        let simulator = sim::top_sim::Simulator::new(module_id, &netlist_sim);
-        let sim_inputs =
-            (0..).map(|t| simulator.gadget_vcd_inputs(&mut sim_controls, t, &netlist_sim));
-        let mut sim_states_iter = simulator.simu(sim_inputs, &netlist_sim);
+        println!("Starting simu");
+        let simulator = sim::top_sim::Simulator::new(&netlist_sim, vcd_parser, &dut_path)?;
+        let n_cycles = simulator.n_cycles();
+        let mut sim_states_iter = simulator.simu(&netlist_sim, n_cycles - 1);
         let mut vcd_write_file =
             std::io::BufWriter::new(std::fs::File::create(&config.output_vcd)?);
         let mut vcd_writer = sim::vcd_writer::VcdWriter::new(
@@ -254,7 +247,9 @@ fn check_gadget_top<'a>(
         }
         dbg!("Simu done");
     }
+    return Ok(());
 
+    /*
     let library: crate::composite_gadget::GadgetLibrary = netlist.try_into()?;
     println!("initializing vcd states...");
     let vcd_states = clk_vcd::VcdStates::new(&mut open_simu_vcd(config)?, &clk_path)?;
@@ -362,6 +357,7 @@ fn check_gadget_top<'a>(
             .push(sg_controls.lookups());
     }
     Ok(())
+        */
 }
 
 fn open_simu_vcd(config: &config::Config) -> Result<std::io::BufReader<std::fs::File>> {

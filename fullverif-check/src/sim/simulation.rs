@@ -1,31 +1,11 @@
-// TODO:
-// 1. Get simulation running:
-// - initalize from vcd state
-// - check run at top-level
-// 2. Add basic security verification (no glitches, no transitions)
-// - Get gadget structure
-// - "Reset" valid gadget output sharings.
-// - Get a notion of "gadget sensitivity"/"gadget validity", and mark randomness as used.
-// 3. Add glitches (glitch_sensitivity: ShareSet in WireState ?)
-// 4. Add transitions for shares: revisit how formal model of gadget composition works.
-// - Overlapping structural gadgets.
-// - Relax correctness requirement for gadgets.
-// - Allow gadgets that take only part of the input sharing.
-// - For each "out-of-gadget" combinational gate, cluster consecutive executions with the same
-// share in one structural gadget. Require bubble between executions of different structural
-// gadgets. That way, we are still O-PINI, pipeline, and iterated transition-robust within one
-// structural gadget. Different structural gadgets are non-adjacent (notion to be defined ? means
-// use the same structural gate consecutively).
-// 4. Add transitions for randomness.
-
 use super::fv_cells::{CombBinary, CombUnitary, Gate};
 use super::gadget::{Latency, RndPortId, Slatency};
-use super::module::WireValue;
 use super::recsim::{GlobInstId, NspgiId, NspgiVec};
 use super::top_sim::GlobSimulationState;
+use super::WireValue;
 use crate::utils::{ShareId, ShareSet};
 use anyhow::{bail, Result};
-use itertools::izip;
+use itertools::{izip, Itertools};
 use std::ops::Deref;
 use std::rc::Rc;
 
@@ -63,6 +43,12 @@ impl WireState {
     pub fn glitch_deterministic(&self) -> bool {
         self.deterministic && self.glitch_sensitivity.is_empty()
     }
+    pub fn sensitive(&self) -> bool {
+        !self.sensitivity.is_empty()
+    }
+    pub fn glitch_sensitive(&self) -> bool {
+        !self.glitch_sensitivity.is_empty()
+    }
     pub fn is_control(&self, value: WireValue) -> bool {
         self.glitch_deterministic() && self.value == Some(value)
     }
@@ -88,6 +74,10 @@ impl WireState {
     }
     pub fn with_value(mut self, value: Option<WireValue>) -> Self {
         self.value = value;
+        self
+    }
+    pub fn stop_glitches(mut self) -> Self {
+        self.glitch_sensitivity = self.sensitivity;
         self
     }
     pub fn with_glitches(mut self, glitches: ShareSet) -> Self {
@@ -189,7 +179,7 @@ impl CombBinary {
         &self,
         op0: &WireState,
         op1: &WireState,
-        sim_state: &mut GlobSimulationState,
+        sim_state: Option<&mut GlobSimulationState>,
         inst_id: GlobInstId,
     ) -> WireState {
         let mut res = if op0.is_control(self.neutral())
@@ -203,8 +193,10 @@ impl CombBinary {
             let sensitivity = op0.sensitivity.union(op1.sensitivity);
             let glitch_sensitivity = op0.glitch_sensitivity.union(op1.glitch_sensitivity);
             let value = self.opx(op0.value, op1.value);
-            sim_state.leak_random(op0, inst_id);
-            sim_state.leak_random(op1, inst_id);
+            if let Some(sim_state) = sim_state {
+                sim_state.leak_random(op0, inst_id);
+                sim_state.leak_random(op1, inst_id);
+            }
             let random = None;
             let deterministic = op0.deterministic && op1.deterministic;
             let nspgi_dep = op0.nspgi_dep.max(&op1.nspgi_dep);
@@ -219,7 +211,7 @@ impl CombBinary {
             res.consistency_check();
             res
         };
-        // FIXME: handle gating with stable deterministic value ?
+        // FIXME: handle glitch gating with stable deterministic value ?
         res.glitch_sensitivity = op0.glitch_sensitivity.union(op1.glitch_sensitivity);
         res
     }
@@ -228,10 +220,10 @@ pub fn sim_mux(
     op0: &WireState,
     op1: &WireState,
     ops: &WireState,
-    sim_state: &mut GlobSimulationState,
+    sim_state: Option<&mut GlobSimulationState>,
     inst_id: GlobInstId,
 ) -> WireState {
-    // FIXME: handle gating with stable deterministic value ?
+    // FIXME: handle glitch gating with stable deterministic value ?
     op0.consistency_check();
     op1.consistency_check();
     ops.consistency_check();
@@ -243,9 +235,11 @@ pub fn sim_mux(
         // Here we are a bit pessimistic wrt randomness, some cases might not be leakage, but that
         // should not be an issue in practice: mux without deterministic control should not be used
         // with randomness (outside "assumed" gadgets).
-        sim_state.leak_random(op0, inst_id);
-        sim_state.leak_random(op1, inst_id);
-        sim_state.leak_random(ops, inst_id);
+        if let Some(sim_state) = sim_state {
+            sim_state.leak_random(op0, inst_id);
+            sim_state.leak_random(op1, inst_id);
+            sim_state.leak_random(ops, inst_id);
+        }
         WireState {
             sensitivity: op0
                 .sensitivity
@@ -272,18 +266,25 @@ impl NspgiDep {
     fn is_empty(&self) -> bool {
         self.0.iter().all(|dep| dep.is_none())
     }
-    fn max(&self, other: &Self) -> Self {
+    pub fn max(&self, other: &Self) -> Self {
         if self.is_empty() {
             other.clone()
-        } else if other.is_empty() {
+        } else if other.is_empty() || std::rc::Rc::ptr_eq(&self.0, &other.0) || self == other {
             self.clone()
         } else {
             Self(Rc::new(NspgiVec::from_vec(
-                izip!(self.0.iter().copied(), other.0.iter().copied())
-                    .map(|(d0, d1)| d0.max(d1))
+                self.0
+                    .iter()
+                    .copied()
+                    .zip_longest(other.0.iter().copied())
+                    .map(|pair| pair.reduce(|d0, d1| d0.max(d1)))
                     .collect(),
             )))
         }
+    }
+    pub fn is_larger_than(&self, other: &Self) -> bool {
+        // TODO improve perf
+        self == &self.max(other)
     }
     pub fn with_dep(&self, nspgi_id: NspgiId, lat: Slatency) -> Self {
         let mut res = self.0.deref().clone();
@@ -293,5 +294,8 @@ impl NspgiDep {
     }
     pub fn last(&self, nspgi_id: NspgiId) -> Option<Slatency> {
         *self.0.get(nspgi_id)?
+    }
+    pub fn empty() -> Self {
+        Self(Rc::new(NspgiVec::new()))
     }
 }

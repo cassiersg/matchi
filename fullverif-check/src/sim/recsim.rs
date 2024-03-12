@@ -16,12 +16,13 @@
 //     - for the pre-calculation: iterate over wires, and eval them using the DfsPostOrder
 //
 use super::fv_cells::{CombUnitary, Gate};
-use super::gadget::{InputRole, Latency, LatencyVec, Slatency};
+use super::gadget::{Latency, LatencyVec, PortRole, Slatency};
 use super::module::{
-    ConnectionId, InputId, InputVec, InstanceType, InstanceVec, OutputId, WireId, WireVec,
+    ConnectionId, InputId, InputVec, InstanceId, InstanceType, InstanceVec, OutputId, WireId,
+    WireVec,
 };
-use super::netlist::Netlist;
-use super::simulation::WireState;
+use super::netlist::{ModList, Netlist};
+use super::simulation::{NspgiDep, WireState};
 use super::top_sim::GlobSimulationState;
 use super::{ModuleId, WireValue};
 use crate::type_utils::new_id;
@@ -64,14 +65,14 @@ pub trait Evaluator {
         &self,
         out: OutputId,
         state: &mut EvaluatorState,
-        sim_state: &mut GlobSimulationState,
+        sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) -> WireState;
     #[allow(unused_variables)]
     fn eval_finish(
         &self,
         state: &mut EvaluatorState,
-        sim_state: &mut GlobSimulationState,
+        sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) {
     }
@@ -79,7 +80,7 @@ pub trait Evaluator {
     fn check_safe_input(
         &self,
         state: &mut EvaluatorState,
-        sim_state: &mut GlobSimulationState,
+        sim_state: Option<&mut GlobSimulationState>,
         input: InputId,
         netlist: &Netlist,
     ) -> Result<()> {
@@ -90,7 +91,7 @@ pub trait Evaluator {
         &self,
         out: OutputId,
         state: &mut EvaluatorState,
-        sim_state: &mut GlobSimulationState,
+        sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) -> Result<()> {
         Ok(())
@@ -99,7 +100,7 @@ pub trait Evaluator {
     fn check_safe_finish(
         &self,
         state: &mut EvaluatorState,
-        sim_state: &mut GlobSimulationState,
+        sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) -> Result<()> {
         Ok(())
@@ -222,11 +223,49 @@ pub struct GateState {
     inputs: InputVec<Option<WireState>>,
     //output: Option<WireState>,
 }
-#[derive(Debug, Clone)]
 
+#[derive(Debug, Clone)]
 pub struct PipelineGadgetState {
     inputs: LatencyVec<InputVec<Option<WireState>>>,
+    output_states: LatencyVec<Option<PipelineStageStatus>>,
     module_state: ModuleState,
+}
+
+#[derive(Debug, Clone)]
+struct PipelineStageStatus {
+    // All inputs are deterministic.
+    deterministic: bool,
+    // Any input is sensitive.
+    sensitive: bool,
+    // Any input at the same lat is glitch-sensitive.
+    glitch_sensitive: bool,
+    // All randomness input are random.
+    randomness: bool,
+    // NSPGI dependencies
+    nspgi_dep: NspgiDep,
+}
+
+impl PipelineStageStatus {
+    fn from_inputs<'a>(wires: impl Iterator<Item = (&'a PortRole, &'a WireState, bool)>) -> Self {
+        let init = Self {
+            deterministic: true,
+            sensitive: false,
+            glitch_sensitive: false,
+            randomness: true,
+            nspgi_dep: NspgiDep::empty(),
+        };
+        wires.fold(init, |mut state, (input_role, wire_state, same_cycle)| {
+            state.deterministic &= wire_state.deterministic;
+            state.glitch_sensitive |=
+                wire_state.sensitive() | (same_cycle & wire_state.glitch_sensitive());
+            state.sensitive |= wire_state.sensitive();
+            if matches!(input_role, PortRole::Random(_)) {
+                state.randomness &= wire_state.random.is_some();
+            }
+            state.nspgi_dep = state.nspgi_dep.max(&wire_state.nspgi_dep);
+            state
+        })
+    }
 }
 
 impl Evaluator for ModuleEvaluator {
@@ -249,7 +288,7 @@ impl Evaluator for ModuleEvaluator {
         &self,
         out: OutputId,
         state: &mut EvaluatorState,
-        sim_state: &mut GlobSimulationState,
+        sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) -> WireState {
         self.eval_output_inner(out, state.module_mut(), sim_state, netlist)
@@ -257,7 +296,7 @@ impl Evaluator for ModuleEvaluator {
     fn eval_finish(
         &self,
         state: &mut EvaluatorState,
-        sim_state: &mut GlobSimulationState,
+        sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) {
         self.eval_finish_inner(state.module_mut(), sim_state, netlist);
@@ -266,7 +305,7 @@ impl Evaluator for ModuleEvaluator {
         &self,
         out: OutputId,
         state: &mut EvaluatorState,
-        sim_state: &mut GlobSimulationState,
+        sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) -> Result<()> {
         let state = state.module_mut();
@@ -275,14 +314,17 @@ impl Evaluator for ModuleEvaluator {
     fn check_safe_finish(
         &self,
         state: &mut EvaluatorState,
-        sim_state: &mut GlobSimulationState,
+        sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) -> Result<()> {
         let state = state.module_mut();
         self.check_safe_finish_inner(state, sim_state, netlist)
     }
     fn glob_inst2path(&self, ginst: GlobInstId, netlist: &Netlist) -> Option<String> {
-        let module = &netlist[self.module_id];
+        let module = netlist.module(self.module_id);
+        if ginst == self.ginst_id {
+            return None;
+        }
         let inst_id = self
             .inst_ids
             .binary_search_by(|eval_instance| eval_instance.insts.compare(&ginst).reverse())
@@ -330,7 +372,7 @@ impl Evaluator for GateEvaluator {
         &self,
         _out: OutputId,
         state: &mut EvaluatorState,
-        sim_state: &mut GlobSimulationState,
+        sim_state: Option<&mut GlobSimulationState>,
         _netlist: &Netlist,
     ) -> WireState {
         let state = state.gate_mut();
@@ -340,7 +382,9 @@ impl Evaluator for GateEvaluator {
                 match ugate {
                     CombUnitary::Buf => op.clone(),
                     CombUnitary::Not => {
-                        sim_state.leak_random(op, self.inst_id);
+                        if let Some(sim_state) = sim_state {
+                            sim_state.leak_random(op, self.inst_id);
+                        }
                         op.negate()
                     }
                 }
@@ -358,9 +402,15 @@ impl Evaluator for GateEvaluator {
             }
             Gate::Dff => {
                 if let Some(wire_state) = state.inputs[1].as_ref() {
-                    sim_state.store_random(wire_state);
+                    if let Some(sim_state) = sim_state {
+                        sim_state.store_random(wire_state);
+                    }
                 }
-                state.prev_inputs[1].clone().unwrap_or(WireState::control())
+                // TODO: only stop glitches for some specifically-marked gates?
+                state.prev_inputs[1]
+                    .clone()
+                    .unwrap_or(WireState::control())
+                    .stop_glitches()
             }
         }
     }
@@ -368,7 +418,7 @@ impl Evaluator for GateEvaluator {
         &self,
         _out: OutputId,
         state: &mut EvaluatorState,
-        _sim_state: &mut GlobSimulationState,
+        _sim_state: Option<&mut GlobSimulationState>,
         _netlist: &Netlist,
     ) -> Result<()> {
         let state = state.gate();
@@ -436,7 +486,7 @@ impl Evaluator for TieEvaluator {
         &self,
         _out: OutputId,
         _state: &mut EvaluatorState,
-        _sim_state: &mut GlobSimulationState,
+        _sim_state: Option<&mut GlobSimulationState>,
         _netlist: &Netlist,
     ) -> WireState {
         WireState::control().with_value(Some(self.value))
@@ -477,7 +527,15 @@ impl Evaluator for PipelineGadgetEvaluator {
         input_state: WireState,
         netlist: &Netlist,
     ) {
-        let module = &netlist[self.module_id];
+        let module = netlist.module(self.module_id);
+        /*
+        eprintln!(
+            "set_input {} {}/{}",
+            module.name,
+            input,
+            module.input_ports.len()
+        );
+        */
         let state = state.pipeline_gadget_mut();
         state.inputs[Latency::from_raw(0)][input] = Some(input_state.clone());
         self.module_evaluator
@@ -490,16 +548,16 @@ impl Evaluator for PipelineGadgetEvaluator {
     fn check_safe_input(
         &self,
         state: &mut EvaluatorState,
-        sim_state: &mut GlobSimulationState,
+        sim_state: Option<&mut GlobSimulationState>,
         input: InputId,
         netlist: &Netlist,
     ) -> Result<()> {
         let state = state.pipeline_gadget_mut();
-        let module = &netlist[self.module_id];
+        let module = netlist.module(self.module_id);
         let gadget = netlist.gadget(self.module_id).unwrap();
         let wire_state = state.inputs[0][input].as_ref().unwrap();
         match &gadget.input_roles[input] {
-            InputRole::Share(share_id) => {
+            PortRole::Share(share_id) => {
                 if !wire_state.sensitivity.subset_of(ShareSet::from(*share_id)) {
                     Err(anyhow!(
                         "Input share index {} is sensitive for shares {}",
@@ -516,7 +574,7 @@ impl Evaluator for PipelineGadgetEvaluator {
                     Ok(())
                 }
             }
-            InputRole::Random(_) => {
+            PortRole::Random(_) => {
                 if !wire_state.glitch_sensitivity.is_empty() {
                     Err(anyhow!(
                         "Randomness input is (glitch-)sensitive for shares {}",
@@ -526,7 +584,7 @@ impl Evaluator for PipelineGadgetEvaluator {
                     Ok(())
                 }
             }
-            InputRole::Control => {
+            PortRole::Control => {
                 if !wire_state.deterministic {
                     Err(anyhow!(
                         "Control input is not a deterministic value (it is share- or random-dependent)",
@@ -549,7 +607,7 @@ impl Evaluator for PipelineGadgetEvaluator {
         if wire_state
             .nspgi_dep
             .last(self.nspgi_id)
-            .is_some_and(|lat| sim_state.last_det_exec[self.nspgi_id] < lat)
+            .is_some_and(|lat| sim_state.unwrap().last_det_exec[self.nspgi_id] < lat)
         {
             bail!("Input {} depends on a previous execution of this gadget, there was no pipeline bubble since then.",
                 module.ports[module.input_ports[input]],
@@ -557,96 +615,142 @@ impl Evaluator for PipelineGadgetEvaluator {
         }
         Ok(())
     }
+    fn check_safe_finish(
+        &self,
+        state: &mut EvaluatorState,
+        sim_state: Option<&mut GlobSimulationState>,
+        netlist: &Netlist,
+    ) -> Result<()> {
+        let module = netlist.module(self.module_id);
+        let gadget = netlist.gadget(self.module_id).unwrap();
+        let state = state.pipeline_gadget_mut();
+        let all_in_status = state.output_states[gadget.max_input_latency]
+            .as_ref()
+            .unwrap();
+        if all_in_status.sensitive {
+            for input_id in &gadget.rnd_ports {
+                let lat = gadget.max_input_latency - gadget.latency[module.input_ports[*input_id]];
+                let random_wire_state = state.inputs[lat][*input_id].as_ref().unwrap();
+                if random_wire_state.random.is_none() {
+                    bail!("Gadget execution has at least one sensitive input but randomness wire {} is not a fresh random", module.ports[module.input_ports[*input_id]]);
+                }
+            }
+        }
+        Ok(())
+    }
     fn eval_output(
         &self,
         out: OutputId,
         state: &mut EvaluatorState,
-        sim_state: &mut GlobSimulationState,
+        sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) -> WireState {
         let state = state.pipeline_gadget_mut();
         let gadget = netlist.gadget(self.module_id).unwrap();
-        let module = &netlist[self.module_id];
-        let out_lats = &gadget.valid_latencies[module.output_ports[out]];
-        assert_eq!(out_lats.len(), Latency::from_raw(1));
-        let out_lat = out_lats[0];
+        let module = netlist.module(self.module_id);
+        let out_lat = gadget.latency[module.output_ports[out]];
         if out_lat == Latency::from_raw(0) {
             assert!(
                 state.inputs[0].iter().all(|x| x.is_some()),
                 "gadget {}, inputs: {:?}",
                 module.name,
-                state.inputs[0]
+                state.inputs[0],
             );
         }
-        let super::gadget::OutputRole::Share(share_id) = gadget.output_roles[out] else {
-            panic!("Output {out} is not a share.")
+        // We use the module simulator only for evaluating the value of the output.
+        // Here we do not forward the sim_state: in module and gate, it is used only for leaking
+        // randoms, which we want to handle at the border of the gadget.
+        let res =
+            self.module_evaluator
+                .eval_output_inner(out, &mut state.module_state, None, netlist);
+        // Let us evaluate the output based solely on the gadget annotations.
+        let out_status = self.out_status(state, out_lat, netlist);
+        let share_id = gadget.output_share_id[out];
+        let g_res = WireState {
+            sensitivity: ShareSet::from(share_id).clear_if(!out_status.sensitive),
+            glitch_sensitivity: ShareSet::from(share_id).clear_if(!out_status.glitch_sensitive),
+            value: res.value, // Here we need actual eval.
+            random: None,
+            deterministic: out_status.deterministic,
+            nspgi_dep: out_status.nspgi_dep.clone(),
         };
-        // Here we use the module simulator to find out if the input is sensitive, and how the
-        // randomness is used. Should be done without looking at the internals.
-        let mut res = self.module_evaluator.eval_output_inner(
-            out,
-            &mut state.module_state,
-            sim_state,
-            netlist,
-        );
-        // We set sensitivity to the output share. Only exception: when we are deterministic.
-        // We can be sensitive, even if we originally weren't (e.g. refresh gadget).
-        if res.glitch_deterministic() {
-            // Do not change anything here.
-        } else {
-            res.glitch_sensitivity = ShareSet::from(share_id);
-            res.nspgi_dep = res.nspgi_dep.with_dep(
-                self.nspgi_id,
-                Slatency::from(sim_state.cur_lat()) - Slatency::from(out_lat),
-            );
-            if !res.deterministic {
-                res.sensitivity = ShareSet::from(share_id);
-            }
+        if out_status.sensitive {
+            assert!(out_status.glitch_sensitive);
         }
-        // Outputs of gadgets cannot be fresh randoms.
-        res.random = None;
-        // FIXME:need to check annotations
-        // Module simulation can say output is valid (e.g. MSKcst non-share 0 output), while gadget
-        // doesn't.
-        res.consistency_check();
-        res
+        /*
+        eprintln!("module: {}", module.name);
+        eprintln!("res: {:?}", res);
+        eprintln!("g_res: {:?}", g_res);
+        eprintln!("out_status: {:?}", out_status);
+        eprintln!("state.inputs: {:?}", state.inputs);
+        eprintln!("state.output_states: {:?}", state.output_states);
+        */
+        if !g_res.sensitive() {
+            assert!(!res.sensitive());
+        }
+        if !g_res.glitch_sensitive() {
+            assert!(!res.glitch_sensitive());
+        }
+        if g_res.deterministic {
+            assert!(res.deterministic);
+        }
+        assert!(g_res.nspgi_dep.is_larger_than(&res.nspgi_dep));
+        g_res.consistency_check();
+        g_res
     }
     fn eval_finish(
         &self,
         state: &mut EvaluatorState,
-        sim_state: &mut GlobSimulationState,
+        mut sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) {
         let state = state.pipeline_gadget_mut();
         self.module_evaluator
-            .eval_finish_inner(&mut state.module_state, sim_state, netlist);
+            .eval_finish_inner(&mut state.module_state, None, netlist);
         // use the fresh randomness
         // We look back max_input_latency cycles, so we have all required inputs available.
-        let module = &netlist[self.module_id];
+        let module = netlist.module(self.module_id);
         let gadget = netlist.gadget(self.module_id).unwrap();
-        let exec_deterministic = module
-            .input_ports
-            .iter_enumerated()
-            .any(|(input_id, con_id)| {
-                Some(*con_id) == module.clock
-                    || state.inputs[gadget.max_input_latency - gadget.valid_latencies[*con_id][0]]
-                        [input_id]
-                        .as_ref()
-                        .unwrap()
-                        .glitch_deterministic()
-            });
-        if exec_deterministic {
-            sim_state.nspgi_det_exec(self.nspgi_id);
-        } else {
-            for (input_id, input_role) in gadget.input_roles.iter_enumerated() {
-                if let InputRole::Random(_) = input_role {
-                    let lat = gadget.max_input_latency
-                        - gadget.valid_latencies[module.input_ports[input_id]][0];
-                    sim_state.use_random(
-                        state.inputs[lat][input_id].as_ref().unwrap(),
-                        self.module_evaluator.ginst_id,
-                        lat,
+        self.compute_output_state(state, gadget.max_input_latency, netlist);
+        let all_in_status = state.output_states[gadget.max_input_latency]
+            .as_ref()
+            .unwrap();
+        // TODO: model: do we have an issue with transition on sensitive-only gadgets?
+        if !all_in_status.glitch_sensitive {
+            if let Some(sim_state) = sim_state.as_deref_mut() {
+                sim_state.nspgi_det_exec(self.nspgi_id);
+            }
+        }
+        // For random, it is not needed to be fresh if input is sensitive only in glitch domain:
+        // glitches can remove randomness anyway. (Randomness is still "leaked").
+        for input_id in &gadget.rnd_ports {
+            let lat = gadget.max_input_latency - gadget.latency[module.input_ports[*input_id]];
+            let random_wire_state = state.inputs[lat][*input_id].as_ref().unwrap();
+            let ginst_id = self.module_evaluator.ginst_id;
+            /*
+            eprintln!(
+                "use_random module: {}, ginst_id: {}, input_id: {}, wire: {:?}",
+                module.name, ginst_id, input_id, random_wire_state
+            );
+            */
+            if let Some(sim_state) = sim_state.as_deref_mut() {
+                if all_in_status.sensitive {
+                    sim_state.use_random(random_wire_state, ginst_id, lat);
+                }
+                sim_state.leak_random(random_wire_state, ginst_id);
+                // We don't know what to do with the random until we are late enough, but until then we
+                // have to say that the random is stored in the gadget, otherwise its state is not
+                // tracked anymore.
+                for store_lat in 0..lat.index() {
+                    /*
+                    eprintln!(
+                        "store_lat: {} max_input_latency: {}, wire_state: {:?}",
+                        store_lat,
+                        gadget.max_input_latency,
+                        state.inputs[store_lat][*input_id].as_ref().unwrap()
                     );
+                    */
+                    sim_state.store_random(state.inputs[store_lat][*input_id].as_ref().unwrap());
                 }
             }
         }
@@ -663,10 +767,11 @@ impl ModuleEvaluator {
         queries: Vec<OutputId>,
         used_ids: &mut EvalInstanceIds,
     ) -> Self {
-        let module = &netlist[module_id];
-        let wg = &module.comb_wire_dag;
+        let module = netlist.module(module_id);
+        let wg = &netlist.module_comb_deps(module_id).comb_wire_dag;
         let ginst_id = used_ids.new_inst();
         /*
+        eprintln!("new module {}, ginst_id: {:?}", module.name, ginst_id);
         eprintln!("module: {}", module.name);
         eprintln!("wg: {:?}", wg);
         eprintln!("queries: {:?}", queries);
@@ -708,18 +813,37 @@ impl ModuleEvaluator {
             .indices()
             .flat_map(|eval_wire_id| eval_dfs(eval_wire_id).into_iter())
             .collect();
-        let (instance_evaluators, inst_ids) = module
+        let (instance_evaluators, inst_ids): (_, InstanceVec<_>) = module
             .instances
             .iter()
             .zip(instance_queries)
             .map(|(instance, queries)| {
                 let mut inst_id_range = used_ids.start_new();
-                let res =
-                    InstanceEvaluator::new(&instance.architecture, queries, netlist, used_ids);
-                inst_id_range.copy_end(used_ids);
+                /*
+                eprintln!(
+                    "module {}, before: used_ids: {:?}, inst_id_range: {:?}",
+                    module.name, used_ids, inst_id_range
+                );
+                */
+                let res = InstanceEvaluator::new(
+                    &instance.architecture,
+                    queries,
+                    netlist,
+                    &mut inst_id_range,
+                );
+                used_ids.copy_end(&inst_id_range);
+                /*
+                eprintln!(
+                    "module {}, after: used_ids: {:?}, inst_id_range: {:?}",
+                    module.name, used_ids, inst_id_range
+                );
+                */
                 (res, inst_id_range)
             })
             .unzip();
+        for (r0, r1) in std::iter::zip(&inst_ids[InstanceId::from_raw(1)..], &inst_ids) {
+            assert_eq!(r0.insts.start, r1.insts.end);
+        }
         Self {
             module_id,
             instance_evaluators,
@@ -733,21 +857,21 @@ impl ModuleEvaluator {
         &self,
         wires: &[WireId],
         state: &mut ModuleState,
-        sim_state: &mut GlobSimulationState,
+        mut sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) {
         for wire in wires {
-            self.eval_wire(*wire, state, sim_state, netlist);
+            self.eval_wire(*wire, state, sim_state.as_deref_mut(), netlist);
         }
     }
     fn eval_wire(
         &self,
         wire: WireId,
         state: &mut ModuleState,
-        sim_state: &mut GlobSimulationState,
+        sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) {
-        let module = &netlist[self.module_id];
+        let module = netlist.module(self.module_id);
         /*
         eprintln!(
             "eval wire {:?} ({:?}) in module {}",
@@ -773,7 +897,7 @@ impl ModuleEvaluator {
     }
     fn eval_fanout(&self, wire: WireId, state: &mut ModuleState, netlist: &Netlist) {
         //eprintln!("eval fanout of wire {}", wire);
-        for (instance_id, input_id) in &netlist[self.module_id].wires[wire].sinks {
+        for (instance_id, input_id) in &netlist.module(self.module_id).wires[wire].sinks {
             if let Some(sub_evaluator) = &self.instance_evaluators[*instance_id] {
                 /*
                 eprintln!(
@@ -797,14 +921,14 @@ impl ModuleEvaluator {
         &self,
         wire: WireId,
         state: &mut ModuleState,
-        sim_state: &mut GlobSimulationState,
+        mut sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) -> Result<()> {
-        for (instance_id, input_id) in &netlist[self.module_id].wires[wire].sinks {
+        for (instance_id, input_id) in &netlist.module(self.module_id).wires[wire].sinks {
             if let Some(sub_evaluator) = &self.instance_evaluators[*instance_id] {
                 sub_evaluator.check_safe_input(
                     state.instance_states[*instance_id].as_mut().unwrap(),
-                    sim_state,
+                    sim_state.as_deref_mut(),
                     *input_id,
                     netlist,
                 )?;
@@ -819,7 +943,7 @@ impl ModuleEvaluator {
                     .map(|eval| eval.init_next(state.as_ref().unwrap(), netlist))
             })
             .collect();
-        let wire_states = WireVec::from_vec(vec![None; netlist[self.module_id].wires.len()]);
+        let wire_states = WireVec::from_vec(vec![None; netlist.module(self.module_id).wires.len()]);
         let next_eval_query_id = 0;
         let next_check_query_id = 0;
         ModuleState {
@@ -837,7 +961,7 @@ impl ModuleEvaluator {
             .collect();
         let wire_states = WireVec::from_vec(vec![
             Some(WireState::control());
-            netlist[self.module_id].wires.len()
+            netlist.module(self.module_id).wires.len()
         ]);
         let next_eval_query_id = self.eval_order.len() + 1;
         let next_check_query_id = 0;
@@ -855,7 +979,7 @@ impl ModuleEvaluator {
         input_state: WireState,
         netlist: &Netlist,
     ) {
-        let module = &netlist[self.module_id];
+        let module = netlist.module(self.module_id);
         let con_id = module.input_ports[input];
         let wire_id = module.connection_wires[con_id];
         if input_state.random.is_some() {
@@ -874,10 +998,10 @@ impl ModuleEvaluator {
         &self,
         out: OutputId,
         state: &mut ModuleState,
-        sim_state: &mut GlobSimulationState,
+        sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) -> WireState {
-        let module = &netlist[self.module_id];
+        let module = netlist.module(self.module_id);
         let (next_con_id, next_wires) = &self.eval_order[state.next_eval_query_id];
         let out = module.output_ports[out];
         assert_eq!(out, *next_con_id);
@@ -890,17 +1014,22 @@ impl ModuleEvaluator {
     fn eval_finish_inner(
         &self,
         state: &mut ModuleState,
-        sim_state: &mut GlobSimulationState,
+        mut sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) {
         assert_eq!(state.next_eval_query_id, self.eval_order.len());
-        self.eval_wires(self.eval_finish.as_slice(), state, sim_state, netlist);
+        self.eval_wires(
+            self.eval_finish.as_slice(),
+            state,
+            sim_state.as_deref_mut(),
+            netlist,
+        );
         state.next_eval_query_id += 1;
         for (evaluator, state) in
             itertools::izip!(&self.instance_evaluators, &mut state.instance_states,)
         {
             if let (Some(evaluator), Some(state)) = (evaluator, state.as_mut()) {
-                evaluator.eval_finish(state, sim_state, netlist);
+                evaluator.eval_finish(state, sim_state.as_deref_mut(), netlist);
             } else {
                 assert!(evaluator.is_none() && state.is_none());
             }
@@ -910,15 +1039,15 @@ impl ModuleEvaluator {
         &self,
         out: OutputId,
         state: &mut ModuleState,
-        sim_state: &mut GlobSimulationState,
+        mut sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) -> Result<()> {
-        let module = &netlist[self.module_id];
+        let module = netlist.module(self.module_id);
         let (next_con_id, next_wires) = &self.eval_order[state.next_check_query_id];
         let out = module.output_ports[out];
         assert_eq!(out, *next_con_id);
         for wire_id in next_wires {
-            self.check_wire(*wire_id, state, sim_state, netlist)?;
+            self.check_wire(*wire_id, state, sim_state.as_deref_mut(), netlist)?;
         }
         state.next_check_query_id += 1;
         Ok(())
@@ -926,18 +1055,18 @@ impl ModuleEvaluator {
     fn check_safe_finish_inner(
         &self,
         state: &mut ModuleState,
-        sim_state: &mut GlobSimulationState,
+        mut sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) -> Result<()> {
-        let module = &netlist[self.module_id];
+        let module = netlist.module(self.module_id);
         assert_eq!(
             state.next_check_query_id,
             self.eval_order.len(),
             "{}",
-            netlist[self.module_id].name
+            module.name
         );
         for wire in &self.eval_finish {
-            self.check_wire(*wire, state, sim_state, netlist)?;
+            self.check_wire(*wire, state, sim_state.as_deref_mut(), netlist)?;
         }
         state.next_check_query_id += 1;
         for ((instance_id, evaluator), state) in itertools::izip!(
@@ -946,7 +1075,7 @@ impl ModuleEvaluator {
         ) {
             if let (Some(evaluator), Some(state)) = (evaluator, state.as_mut()) {
                 evaluator
-                    .check_safe_finish(state, sim_state, netlist)
+                    .check_safe_finish(state, sim_state.as_deref_mut(), netlist)
                     .with_context(|| {
                         format!(
                             "In module {}, checking instance {}.",
@@ -963,17 +1092,17 @@ impl ModuleEvaluator {
         &self,
         wire: WireId,
         state: &mut ModuleState,
-        sim_state: &mut GlobSimulationState,
+        mut sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) -> Result<()> {
-        let module = &netlist[self.module_id];
+        let module = netlist.module(self.module_id);
         let (src_inst_id, src_con) = module.wires[wire].source;
         if let Some(evaluator) = self.instance_evaluators[src_inst_id].as_ref() {
             evaluator
                 .check_safe_out(
                     src_con,
                     state.instance_states[src_inst_id].as_mut().unwrap(),
-                    sim_state,
+                    sim_state.as_deref_mut(),
                     netlist,
                 )
                 .with_context(|| {
@@ -1009,64 +1138,71 @@ impl PipelineGadgetEvaluator {
         Self {
             module_id,
             nspgi_id,
-            module_evaluator: ModuleEvaluator::new(
-                module_id,
-                netlist,
-                queries,
-                &mut EvalInstanceIds::new(),
-            ),
+            module_evaluator: ModuleEvaluator::new(module_id, netlist, queries, used_ids),
         }
     }
     fn state_from(
         &self,
         inputs: LatencyVec<InputVec<Option<WireState>>>,
         module_state: ModuleState,
-        _netlist: &Netlist,
+        netlist: &Netlist,
     ) -> EvaluatorState {
+        let gadget = netlist.gadget(self.module_id).unwrap();
+
         EvaluatorState::PipelineGadget(PipelineGadgetState {
             inputs,
+            output_states: LatencyVec::from_vec(vec![None; gadget.max_latency.index() + 1]),
             module_state,
         })
     }
-    /*
-    fn output_lat_valid(&self, lat: Latency, state: &mut PipelineGadgetState, netlist: &Netlist) {
-        let gadget = netlist.gadget(self.module_id).unwrap();
-        let module = &netlist[self.module_id];
-        state.valid_output_latencies[lat] = Some(
-            module
-                .input_ports
-                .iter_enumerated()
-                .filter_map(|(input_id, con_id)| {
-                    if module.clock == Some(*con_id) {
-                        None
-                    } else {
-                        let input_lats = &gadget.valid_latencies[*con_id];
-                        assert_eq!(input_lats.len(), 1);
-                        let input_lat = input_lats[0];
-                        let lat_diff = lat.checked_sub(input_lat)?;
-                        Some(
-                            state.inputs[lat_diff][input_id]
-                                .expect("uninitialized input")
-                                .valid,
-                        )
-                    }
-                })
-                .all(std::convert::identity),
-        );
-    }
-
-    fn out_valid(
+    fn compute_output_state(
         &self,
         state: &mut PipelineGadgetState,
         out_lat: Latency,
         netlist: &Netlist,
-    ) -> bool {
-        if state.valid_output_latencies[out_lat].is_none() {
-            self.output_lat_valid(out_lat, state, netlist);
-        }
-        state.valid_output_latencies[out_lat].unwrap()
+    ) {
+        let gadget = netlist.gadget(self.module_id).unwrap();
+        let module = netlist.module(self.module_id);
+        // TODO: perf: re-use status from previous evaluation, and only update w.r.t. inputs of the
+        // current cycle.
+
+        //let mut res = LatencyVec::from_vec(vec![None; gadget.max_latency.index() + 1]);
+        //for lat in gadget.output_latencies(netlist) {
+        state.output_states[out_lat] = Some(PipelineStageStatus::from_inputs(
+            module
+                .input_ports
+                .iter_enumerated()
+                .filter_map(|(input_id, con_id)| {
+                    let input_lat = &gadget.latency[*con_id];
+                    /*
+                    eprintln!(
+                        "input_id: {}, input_lat: {}, lat: {}",
+                        input_id, input_lat, lat
+                    );
+                    */
+                    let lat_diff = out_lat.checked_sub(*input_lat)?;
+                    Some((
+                        &gadget.input_roles[input_id],
+                        state.inputs[lat_diff][input_id]
+                            .as_ref()
+                            .expect("uninitialized input"),
+                        lat_diff == Latency::from_raw(0),
+                    ))
+                }),
+        ))
     }
-    */
+
+    fn out_status<'a>(
+        &self,
+        state: &'a mut PipelineGadgetState,
+        out_lat: Latency,
+        netlist: &Netlist,
+    ) -> &'a PipelineStageStatus {
+        if state.output_states[out_lat].is_none() {
+            self.compute_output_state(state, out_lat, netlist);
+        }
+        state.output_states[out_lat].as_ref().unwrap()
+    }
 }
 
 impl InstanceEvaluator {
@@ -1076,17 +1212,22 @@ impl InstanceEvaluator {
         netlist: &Netlist,
         used_ids: &mut EvalInstanceIds,
     ) -> Option<Self> {
-        let inst_id = used_ids.new_inst();
         match architecture {
-            InstanceType::Gate(gate) => Some(InstanceEvaluator::Gate(GateEvaluator {
-                gate: *gate,
-                inst_id,
-            })),
+            InstanceType::Gate(gate) => {
+                let inst_id = used_ids.new_inst();
+                Some(InstanceEvaluator::Gate(GateEvaluator {
+                    gate: *gate,
+                    inst_id,
+                }))
+            }
             InstanceType::Module(submodule_id) => match netlist.gadget(*submodule_id) {
-                Some(gadget) if gadget.is_pipeline() => Some(InstanceEvaluator::Gadget(
-                    PipelineGadgetEvaluator::new(*submodule_id, netlist, queries, used_ids),
-                )),
-                _ => Some(InstanceEvaluator::Module(ModuleEvaluator::new(
+                Some(gadget) => Some(InstanceEvaluator::Gadget(PipelineGadgetEvaluator::new(
+                    *submodule_id,
+                    netlist,
+                    queries,
+                    used_ids,
+                ))),
+                None => Some(InstanceEvaluator::Module(ModuleEvaluator::new(
                     *submodule_id,
                     netlist,
                     queries,
@@ -1097,6 +1238,9 @@ impl InstanceEvaluator {
             InstanceType::Tie(value) => {
                 Some(InstanceEvaluator::Tie(TieEvaluator { value: *value }))
             }
+            InstanceType::Clock => Some(InstanceEvaluator::Tie(TieEvaluator {
+                value: WireValue::_0,
+            })),
         }
     }
 }

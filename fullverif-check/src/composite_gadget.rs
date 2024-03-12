@@ -368,7 +368,13 @@ impl Instance {
     fn from_cell(cell: &yosys::Cell, name: &String, library: &GadgetLibrary) -> Result<Self> {
         let architecture = InstanceType::from_cell(cell, library)?;
         let connections = match architecture {
-            InstanceType::Gate(gate) => cell_connection_wires(cell, gate.connections())?,
+            InstanceType::Gate(gate) => cell_connection_wires(
+                cell,
+                gate.connections()
+                    .iter()
+                    .map(|w| (w.name, w.offset))
+                    .collect(),
+            )?,
             InstanceType::Gadget(gadget_id) => {
                 cell_connection_wires(cell, library.gadgets[gadget_id].connections())?
             }
