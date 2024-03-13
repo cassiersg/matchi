@@ -1,5 +1,5 @@
 use super::{OutputVec, PortRole, RndPortId};
-use crate::sim::module::{self, ConnectionId, ConnectionVec, InputVec, WireName};
+use crate::module::{self, ConnectionId, ConnectionVec, InputVec, WireName};
 
 use super::yosys_ext;
 use anyhow::{bail, Result};

@@ -9,10 +9,25 @@ use yosys_netlist_json as yosys;
 extern crate log;
 
 mod config;
-mod sim;
 #[macro_use]
 mod type_utils;
-mod utils;
+mod clk_vcd;
+mod fv_cells;
+mod gadget;
+mod module;
+mod netlist;
+mod recsim;
+mod share_set;
+mod simulation;
+mod top_sim;
+mod vcd_writer;
+mod wire_value;
+
+use wire_value::WireValue;
+
+new_id!(ModuleId, ModuleVec, ModuleSlice);
+
+use netlist::Netlist;
 
 /// Return the path of a signal in a module, splitting the signal name if needed.
 fn signal_path(module: &[String], sig_name: &str) -> Vec<String> {
@@ -31,24 +46,22 @@ fn check_gadget_top<'a>(
 ) -> Result<()> {
     println!("building netlist...");
     let gadget_name = config.gname.as_str();
-    let netlist_sim = sim::Netlist::new(netlist, gadget_name)?;
+    let netlist_sim = Netlist::new(netlist, gadget_name)?;
     let dut_path = signal_path(root_simu_mod.as_slice(), config.dut.as_str());
 
     println!("initializing sim vcd states...");
     let mut vcd_file = open_simu_vcd(config)?;
     let vcd_parser = vcd::Parser::new(&mut vcd_file);
-    // Simulation using sim::recsim
+    // Simulation using recsim
     if true {
         println!("Starting simu");
-        let simulator = sim::top_sim::Simulator::new(&netlist_sim, vcd_parser, &dut_path)?;
+        let simulator = top_sim::Simulator::new(&netlist_sim, vcd_parser, &dut_path)?;
         let n_cycles = simulator.n_cycles();
-        let mut sim_states_iter = simulator.simu(
-            &netlist_sim,
-            sim::top_sim::GlobSimCycle::from_usize(n_cycles),
-        );
+        let mut sim_states_iter =
+            simulator.simu(&netlist_sim, top_sim::GlobSimCycle::from_usize(n_cycles));
         let mut vcd_write_file =
             std::io::BufWriter::new(std::fs::File::create(&config.output_vcd)?);
-        let mut vcd_writer = sim::vcd_writer::VcdWriter::new(
+        let mut vcd_writer = vcd_writer::VcdWriter::new(
             &mut vcd_write_file,
             netlist_sim.id_of(gadget_name).unwrap(),
             &netlist_sim,

@@ -1,6 +1,6 @@
 use super::module::OutputVec;
 use crate::type_utils::new_id;
-use crate::utils::ShareId;
+use crate::share_set::ShareId;
 
 use anyhow::{bail, Error, Result};
 

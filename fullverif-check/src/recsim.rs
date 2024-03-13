@@ -26,7 +26,7 @@ use super::simulation::{NspgiDep, WireState};
 use super::top_sim::GlobSimulationState;
 use super::{ModuleId, WireValue};
 use crate::type_utils::new_id;
-use crate::utils::ShareSet;
+use crate::share_set::ShareSet;
 use anyhow::{anyhow, bail, Context, Result};
 use itertools::izip;
 

@@ -1,7 +1,7 @@
 use super::{Latency, PortRole, RndPortVec};
-use crate::sim::module::{self, ConnectionVec, InputId, InputVec, OutputVec};
-use crate::sim::ModuleId;
-use crate::utils::ShareId;
+use crate::module::{self, ConnectionVec, InputId, InputVec, OutputVec};
+use crate::ModuleId;
+use crate::share_set::ShareId;
 
 use super::yosys_ext;
 use anyhow::{bail, Result};

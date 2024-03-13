@@ -1,6 +1,6 @@
 use super::{Latency, PortRole, RndPortVec};
-use crate::sim::module::{self, ConnectionVec, InputId, WireName};
-use crate::sim::ModuleId;
+use crate::module::{self, ConnectionVec, InputId, WireName};
+use crate::ModuleId;
 use crate::type_utils::new_id;
 use fnv::FnvHashMap as HashMap;
 

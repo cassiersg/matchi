@@ -8,7 +8,7 @@ use super::{
     yosys_ext, ConnectionId, ConnectionVec, InputId, InputSlice, InputVec, OutputSlice, Ports,
     WireId, WireName,
 };
-use crate::sim::WireValue;
+use crate::WireValue;
 
 #[derive(Debug, Clone)]
 pub struct Instance {

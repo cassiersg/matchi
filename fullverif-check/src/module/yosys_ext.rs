@@ -3,7 +3,7 @@ use super::{
     ConnectionId, ConnectionVec, Instance, InstanceType, Ports, WireId, WireName, WireProperties,
     WireVec,
 };
-use crate::sim::WireValue;
+use crate::WireValue;
 use anyhow::Result;
 use yosys_netlist_json as yosys;
 

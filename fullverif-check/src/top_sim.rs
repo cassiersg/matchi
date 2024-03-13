@@ -11,7 +11,7 @@ use super::WireValue;
 use super::{ModuleId, Netlist};
 use crate::type_utils::new_id;
 use crate::type_utils::ExtendIdx;
-use crate::utils::ShareSet;
+use crate::share_set::ShareSet;
 use anyhow::{anyhow, bail, Result};
 use std::collections::VecDeque;
 use std::fmt::Write;

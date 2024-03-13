@@ -3,7 +3,7 @@ use super::gadget::{RndPortId, Slatency};
 use super::recsim::{GlobInstId, NspgiId, NspgiVec};
 use super::top_sim::{GlobSimCycle, GlobSimulationState};
 use super::WireValue;
-use crate::utils::{ShareId, ShareSet};
+use crate::share_set::{ShareId, ShareSet};
 use anyhow::{bail, Result};
 use itertools::Itertools;
 use std::rc::Rc;

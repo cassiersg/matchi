@@ -1,5 +1,5 @@
 use super::Latency;
-use crate::utils::ShareId;
+use crate::share_set::ShareId;
 use anyhow::{anyhow, bail, Context, Result};
 use fnv::FnvHashMap as HashMap;
 use yosys_netlist_json as yosys;

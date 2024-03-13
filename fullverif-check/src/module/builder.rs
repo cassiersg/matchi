@@ -4,10 +4,10 @@ use super::{
     InstanceVec, Module, ModuleCombDeps, OutputId, OutputVec, WireGraph, WireId, WireProperties,
     WireVec,
 };
-use crate::sim::fv_cells::Gate;
-use crate::sim::gadget::PipelineGadget;
-use crate::sim::netlist::ModList;
-use crate::sim::{ModuleId, ModuleVec};
+use crate::fv_cells::Gate;
+use crate::gadget::PipelineGadget;
+use crate::netlist::ModList;
+use crate::{ModuleId, ModuleVec};
 use anyhow::{anyhow, bail, Context, Result};
 use fnv::FnvHashMap as HashMap;
 use std::collections::BTreeSet;

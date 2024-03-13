@@ -4,7 +4,7 @@ use super::recsim::ModuleState;
 use super::simulation::WireState;
 use super::ModuleId;
 use super::WireValue;
-use crate::utils::ShareId;
+use crate::share_set::ShareId;
 use anyhow::Result;
 use yosys_netlist_json as yosys;
 
