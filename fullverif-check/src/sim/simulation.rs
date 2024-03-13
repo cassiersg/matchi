@@ -1,7 +1,7 @@
 use super::fv_cells::{CombBinary, CombUnitary, Gate};
 use super::gadget::{Latency, RndPortId, Slatency};
 use super::recsim::{GlobInstId, NspgiId, NspgiVec};
-use super::top_sim::GlobSimulationState;
+use super::top_sim::{GlobSimCycle, GlobSimulationState};
 use super::WireValue;
 use crate::utils::{ShareId, ShareSet};
 use anyhow::{bail, Result};
@@ -64,7 +64,7 @@ impl WireState {
         res.consistency_check();
         res
     }
-    pub fn random(port: RndPortId, lat: Latency) -> Self {
+    pub fn random(port: RndPortId, lat: GlobSimCycle) -> Self {
         let res = Self {
             random: Some(RandomSource::new(port, lat)),
             ..Self::nil()
@@ -98,10 +98,6 @@ impl WireState {
             self.glitch_sensitivity,
             self.glitch_sensitivity.union(self.sensitivity),
         );
-        if self.random.is_some() {
-            // FIXME: enable when we get random validity back.
-            //assert!(self.value.is_some());
-        }
         if self.deterministic {
             assert!(self.sensitivity.is_empty());
             assert!(self.random.is_none());
@@ -130,11 +126,11 @@ impl WireState {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct RandomSource {
     pub port: RndPortId,
-    pub lat: Latency,
+    pub lat: GlobSimCycle,
 }
 
 impl RandomSource {
-    fn new(port: RndPortId, lat: Latency) -> Self {
+    fn new(port: RndPortId, lat: GlobSimCycle) -> Self {
         RandomSource { port, lat }
     }
 }

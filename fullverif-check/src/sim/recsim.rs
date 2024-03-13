@@ -607,7 +607,7 @@ impl Evaluator for PipelineGadgetEvaluator {
         if wire_state
             .nspgi_dep
             .last(self.nspgi_id)
-            .is_some_and(|lat| sim_state.unwrap().last_det_exec[self.nspgi_id] < lat)
+            .is_some_and(|lat| sim_state.unwrap().last_nonsensitive_exec[self.nspgi_id] < lat)
         {
             bail!("Input {} depends on a previous execution of this gadget, there was no pipeline bubble since then.",
                 module.ports[module.input_ports[input]],
@@ -715,7 +715,7 @@ impl Evaluator for PipelineGadgetEvaluator {
         let all_in_status = state.output_states[gadget.max_input_latency]
             .as_ref()
             .unwrap();
-        // TODO: model: do we have an issue with transition on sensitive-only gadgets?
+        // FIXME: are glitch-sensitive-only gadget counting as pipeline bubble ?
         if !all_in_status.glitch_sensitive {
             if let Some(sim_state) = sim_state.as_deref_mut() {
                 sim_state.nspgi_det_exec(self.nspgi_id);

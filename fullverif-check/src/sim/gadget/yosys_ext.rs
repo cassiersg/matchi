@@ -112,7 +112,7 @@ impl PortKind {
         };
         Ok(
             match fv_type.and_then(yosys::AttributeVal::to_string_if_string) {
-                // FIXME: remove this, we keep it here for backcompat.
+                // TODO: remove this, we keep it here for backcompat.
                 Some("sharing") | Some("sharings_dense") => {
                     check_port_width()?;
                     PortKind::SharingsDense
@@ -223,6 +223,7 @@ pub struct GadgetAttrs {
     pub nshares: u32,
     pub prop: super::GadgetProp,
     pub strat: super::GadgetStrat,
+    pub exec_active: Option<String>,
 }
 
 impl GadgetAttrs {
@@ -239,6 +240,7 @@ impl GadgetAttrs {
                         nshares,
                         prop: prop.try_into()?,
                         strat: strat.try_into()?,
+                        exec_active: get_str_module_attr(yosys_module, "fv_active")?.map(ToOwned::to_owned),
                     }))
                 }
                 (None, None, None, None) => Ok(None),

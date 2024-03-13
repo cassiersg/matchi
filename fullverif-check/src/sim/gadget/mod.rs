@@ -10,7 +10,7 @@ use yosys_netlist_json as yosys;
 
 mod gadget_builder;
 mod pipeline;
-mod top;
+pub mod top;
 mod yosys_ext;
 
 pub use pipeline::PipelineGadget;

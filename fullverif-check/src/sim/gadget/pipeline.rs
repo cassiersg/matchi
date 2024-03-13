@@ -50,7 +50,9 @@ impl PipelineGadget {
             .iter_enumerated()
             .map(|(output_id, port)| match port {
                 PortRole::Share(share_id) => Ok(*share_id),
-                PortRole::Random(_) | PortRole::Control => {
+                PortRole::Random(_) => unreachable!(),
+                PortRole::Control => {
+                    // TODO: should we allow this control output ports in pipeline gadgets ?
                     bail!(
                         "Pipeline gadget output ports must be shares, {} isn't one.",
                         module.ports[module.output_ports[output_id]].name()

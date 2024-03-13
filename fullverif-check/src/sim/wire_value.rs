@@ -5,6 +5,16 @@ pub enum WireValue {
     _1,
 }
 
+impl WireValue {
+    pub fn from_vcd(value: vcd::Value) -> Option<Self> {
+        match value {
+            vcd::Value::V0 => Some(Self::_0),
+            vcd::Value::V1 => Some(Self::_1),
+            vcd::Value::X | vcd::Value::Z => None,
+        }
+    }
+}
+
 impl std::convert::From<WireValue> for WireId {
     fn from(value: WireValue) -> Self {
         match value {

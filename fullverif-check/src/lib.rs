@@ -230,7 +230,10 @@ fn check_gadget_top<'a>(
         println!("Starting simu");
         let simulator = sim::top_sim::Simulator::new(&netlist_sim, vcd_parser, &dut_path)?;
         let n_cycles = simulator.n_cycles();
-        let mut sim_states_iter = simulator.simu(&netlist_sim, n_cycles - 1);
+        let mut sim_states_iter = simulator.simu(
+            &netlist_sim,
+            sim::top_sim::GlobSimCycle::from_usize(n_cycles),
+        );
         let mut vcd_write_file =
             std::io::BufWriter::new(std::fs::File::create(&config.output_vcd)?);
         let mut vcd_writer = sim::vcd_writer::VcdWriter::new(
@@ -239,11 +242,14 @@ fn check_gadget_top<'a>(
             &netlist_sim,
             netlist,
         )?;
-        for i in 0..(dbg!(n_cycles) - 1) {
-            println!("Simu cycle {}/{}", i + 1, n_cycles);
-            sim_states_iter = sim_states_iter.next()?.unwrap();
-            sim_states_iter.check()?;
+        for i in 0.. {
+            println!("Simu cycle {}/{}", i, n_cycles);
+            let Some(iter) = sim_states_iter.next()? else {
+                break;
+            };
+            sim_states_iter = iter;
             vcd_writer.new_state(sim_states_iter.state())?;
+            sim_states_iter.check()?;
         }
         dbg!("Simu done");
     }

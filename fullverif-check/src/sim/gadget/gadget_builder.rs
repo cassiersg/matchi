@@ -1,5 +1,5 @@
 use super::{OutputVec, PortRole, RndPortId};
-use crate::sim::module::{self, InputVec, WireName};
+use crate::sim::module::{self, ConnectionId, ConnectionVec, InputVec, WireName};
 
 use super::yosys_ext;
 use anyhow::{anyhow, bail, Result};
@@ -30,7 +30,8 @@ impl<'a> GadgetBuilder<'a> {
             port_kinds,
         }))
     }
-    fn netname2port(&self, wire_name: &WireName, next_rnd_id: &mut RndPortId) -> Result<PortRole> {
+    fn con2port(&self, con_id: ConnectionId, next_rnd_id: &mut RndPortId) -> Result<PortRole> {
+        let wire_name = &self.module.ports[con_id];
         if self.port_kinds.is_clock(wire_name.name()) {
             bail!(
                 "Port {} is annotated as clock, but is not detected as a clock of a DFF or gadget.",
@@ -42,9 +43,13 @@ impl<'a> GadgetBuilder<'a> {
                     .share_id(wire_name.name(), wire_name.offset as u32),
             ))
         } else if self.port_kinds.is_random(wire_name.name()) {
-            let id = *next_rnd_id;
-            *next_rnd_id += 1;
-            Ok(PortRole::Random(id))
+            if self.module.port_is_input[con_id] {
+                let id = *next_rnd_id;
+                *next_rnd_id += 1;
+                Ok(PortRole::Random(id))
+            } else {
+                bail!("Output ports cannot be randoms (port {})", wire_name);
+            }
         } else {
             assert!(self.port_kinds.is_control(wire_name.name()));
             Ok(PortRole::Control)
@@ -55,25 +60,22 @@ impl<'a> GadgetBuilder<'a> {
         self.module
             .input_ports
             .iter()
-            .map(|con_id| self.netname2port(&self.module.ports[*con_id], &mut next_rnd_id))
+            .map(|con_id| self.con2port(*con_id, &mut next_rnd_id))
             .collect()
     }
     pub fn output_roles(&self) -> Result<OutputVec<PortRole>> {
         self.module
             .output_ports
             .iter()
-            .map(|con_id| {
-                let wire_name = &self.module.ports[*con_id];
-                let port = self.netname2port(wire_name, &mut RndPortId::from_usize(0))?;
-                if matches!(port, PortRole::Random(_)) {
-                    bail!(
-                        "Output port cannot be a random value, {} is one.",
-                        wire_name.name()
-                    );
-                } else {
-                    Ok(port)
-                }
-            })
+            .map(|con_id| self.con2port(*con_id, &mut RndPortId::from_usize(0)))
+            .collect()
+    }
+    pub fn port_roles(&self) -> Result<ConnectionVec<PortRole>> {
+        let mut next_rnd_id = RndPortId::from_usize(0);
+        self.module
+            .ports
+            .indices()
+            .map(|con_id| self.con2port(con_id, &mut next_rnd_id))
             .collect()
     }
     pub fn check_clock(&self, wire_name: &Option<WireName>) -> Result<()> {

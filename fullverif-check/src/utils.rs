@@ -109,10 +109,10 @@ impl ShareSet {
             if x == 0 {
                 None
             } else {
-                let shift = x.trailing_zeros();
+                let shift = x.trailing_zeros() + 1;
                 tot_shift += shift;
                 x >>= shift;
-                Some(ShareId(tot_shift))
+                Some(ShareId(tot_shift - 1))
             }
         })
     }
@@ -132,6 +132,6 @@ impl std::fmt::Display for ShareId {
 }
 impl std::fmt::Display for ShareSet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ShareSet({})", self.iter().join(", "))
+        write!(f, "ShareSet{{{}}}", self.iter().join(", "))
     }
 }
