@@ -5,7 +5,7 @@ use super::{ModuleId, ModuleVec};
 use fnv::FnvHashMap as HashMap;
 use yosys_netlist_json as yosys;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Result};
 
 pub trait ModList {
     fn module(&self, module_id: ModuleId) -> &Module;
@@ -49,7 +49,7 @@ pub struct Netlist {
 
 impl Netlist {
     pub fn new(netlist: &yosys::Netlist, top_gadget: &str) -> Result<Self> {
-        let mut builder = super::module::ModListBuilder::new(netlist)?;
+        let builder = super::module::ModListBuilder::new(netlist)?;
         let Some(top_gadget_id) = builder.id_of(top_gadget) else {
             bail!("Top module {top_gadget} not found in the netlist.");
         };
@@ -65,15 +65,8 @@ impl Netlist {
 }
 
 impl Netlist {
-    pub fn get(&self, module_name: impl AsRef<str>) -> Option<&Module> {
-        self.id_of(module_name)
-            .map(|module_id| self.module(module_id))
-    }
     pub fn id_of(&self, module_name: impl AsRef<str>) -> Option<ModuleId> {
         self.names.get(module_name.as_ref()).copied()
-    }
-    pub fn modules(&self) -> &ModuleVec<Module> {
-        &self.modules
     }
     pub fn gadget(&self, module_id: ModuleId) -> Option<&PipelineGadget> {
         self.gadgets[module_id].as_ref()

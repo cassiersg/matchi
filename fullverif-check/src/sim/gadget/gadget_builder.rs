@@ -2,14 +2,13 @@ use super::{OutputVec, PortRole, RndPortId};
 use crate::sim::module::{self, ConnectionId, ConnectionVec, InputVec, WireName};
 
 use super::yosys_ext;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 
 use yosys_netlist_json as yosys;
 
 #[derive(Debug, Clone)]
 pub struct GadgetBuilder<'a> {
     module: &'a module::Module,
-    yosys_module: &'a yosys::Module,
     pub gadget_attrs: yosys_ext::GadgetAttrs,
     port_kinds: yosys_ext::ModulePortKinds<'a>,
 }
@@ -25,7 +24,6 @@ impl<'a> GadgetBuilder<'a> {
         let port_kinds = yosys_ext::ModulePortKinds::new(yosys_module, gadget_attrs.nshares)?;
         Ok(Some(Self {
             module,
-            yosys_module,
             gadget_attrs,
             port_kinds,
         }))

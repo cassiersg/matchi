@@ -17,30 +17,12 @@ pub enum VarState {
     Uninit,
 }
 
-impl VarState {
-    pub fn to_bool(&self) -> Option<bool> {
-        match self {
-            VarState::Scalar(vcd::Value::V0) => Some(false),
-            VarState::Scalar(vcd::Value::V1) => Some(true),
-            _ => None,
-        }
-    }
-    pub fn scalar(&self) -> Option<vcd::Value> {
-        if let VarState::Scalar(res) = self {
-            Some(*res)
-        } else {
-            None
-        }
-    }
-}
-
 // Id of a variable.
 new_id!(VarId, VarVec, VarSlice);
 
 pub type IdCode = vcd::IdCode;
 
 pub struct VcdParsedHeader<R: std::io::BufRead> {
-    header: vcd::Header,
     parser: vcd::Parser<R>,
     used_vars: VarVec<vcd::Var>,
     clock: IdCode,
@@ -64,7 +46,6 @@ impl<R: std::io::BufRead> VcdParsedHeader<R> {
             .code;
         let var_names = var_names(&header);
         Ok(Self {
-            header,
             parser,
             used_vars: VarVec::new(),
             clock,
@@ -105,11 +86,11 @@ impl VcdParsedStates {
         &self.states[cycle][var_id]
     }
     pub fn get_var_offset(&self, var_offset_id: VarOffsetId, cycle: usize) -> Option<WireValue> {
-        match &self.states[cycle][var_offset_id.0] {
+        match &self.get_var(var_offset_id.0, cycle) {
             VarState::Scalar(value) if var_offset_id.1 == 0 => WireValue::from_vcd(*value),
             VarState::Vector(values) => WireValue::from_vcd(values[var_offset_id.1]),
             VarState::Uninit => None,
-            x @ _ => unreachable!("expected no offset, found {:?}, {:?}", var_offset_id, x),
+            x => unreachable!("expected no offset, found {:?}, {:?}", var_offset_id, x),
         }
     }
     pub fn len(&self) -> usize {

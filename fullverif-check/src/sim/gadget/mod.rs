@@ -1,12 +1,8 @@
-use super::module::{ConnectionVec, InputId, InputVec, OutputVec};
-use super::netlist::ModList;
-use super::{ModuleId, Netlist};
+use super::module::OutputVec;
 use crate::type_utils::new_id;
 use crate::utils::ShareId;
 
 use anyhow::{bail, Error, Result};
-
-use yosys_netlist_json as yosys;
 
 mod gadget_builder;
 mod pipeline;
@@ -45,26 +41,9 @@ pub enum PortRole {
 /// Fullverif security property for a module gadget.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GadgetProp {
-    Mux,
-    Affine,
-    NI,
-    SNI,
-    PINI,
-}
-
-impl GadgetProp {
-    pub fn is_pini(&self) -> bool {
-        match self {
-            GadgetProp::Mux | GadgetProp::Affine | GadgetProp::PINI => true,
-            _ => false,
-        }
-    }
-    pub fn is_affine(&self) -> bool {
-        match self {
-            GadgetProp::Mux | GadgetProp::Affine => true,
-            _ => false,
-        }
-    }
+    Pini,
+    // TODO: handle O-PINI gadgets.
+    Opini,
 }
 
 /// Fullverif strategy for proving security of a gadget.
@@ -90,11 +69,8 @@ impl TryFrom<&str> for GadgetProp {
     type Error = Error;
     fn try_from(value: &str) -> Result<Self> {
         Ok(match value {
-            "_mux" => Self::Mux,
-            "affine" => Self::Affine,
-            "NI" => Self::NI,
-            "SNI" => Self::SNI,
-            "PINI" => Self::PINI,
+            "PINI" => Self::Pini,
+            "affine" | "OPINI" => Self::Opini,
             _ => bail!("{value} is not a known gadget security property."),
         })
     }

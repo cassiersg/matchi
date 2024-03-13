@@ -16,7 +16,7 @@
 //     - for the pre-calculation: iterate over wires, and eval them using the DfsPostOrder
 //
 use super::fv_cells::{CombUnitary, Gate};
-use super::gadget::{Latency, LatencyVec, PortRole, Slatency};
+use super::gadget::{Latency, LatencyVec, PortRole};
 use super::module::{
     ConnectionId, InputId, InputVec, InstanceId, InstanceType, InstanceVec, OutputId, WireId,
     WireVec,
@@ -618,7 +618,7 @@ impl Evaluator for PipelineGadgetEvaluator {
     fn check_safe_finish(
         &self,
         state: &mut EvaluatorState,
-        sim_state: Option<&mut GlobSimulationState>,
+        _sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) -> Result<()> {
         let module = netlist.module(self.module_id);
@@ -642,7 +642,7 @@ impl Evaluator for PipelineGadgetEvaluator {
         &self,
         out: OutputId,
         state: &mut EvaluatorState,
-        sim_state: Option<&mut GlobSimulationState>,
+        _sim_state: Option<&mut GlobSimulationState>,
         netlist: &Netlist,
     ) -> WireState {
         let state = state.pipeline_gadget_mut();
@@ -1221,7 +1221,7 @@ impl InstanceEvaluator {
                 }))
             }
             InstanceType::Module(submodule_id) => match netlist.gadget(*submodule_id) {
-                Some(gadget) => Some(InstanceEvaluator::Gadget(PipelineGadgetEvaluator::new(
+                Some(_gadget) => Some(InstanceEvaluator::Gadget(PipelineGadgetEvaluator::new(
                     *submodule_id,
                     netlist,
                     queries,

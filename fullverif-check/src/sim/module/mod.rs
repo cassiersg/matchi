@@ -1,10 +1,8 @@
 use super::gadget::{LatencyVec, PipelineGadget};
 use super::netlist::ModList;
-use super::netlist::Netlist;
 use super::ModuleId;
 use crate::type_utils::new_id;
-use anyhow::{anyhow, bail, Result};
-use fnv::FnvHashMap as HashMap;
+use anyhow::{bail, Result};
 use yosys_netlist_json as yosys;
 
 mod builder;
@@ -31,7 +29,6 @@ pub struct Module {
     pub name: String,
     pub clock: Option<WireName>,
     pub instances: InstanceVec<Instance>,
-    instance_names: HashMap<String, InstanceId>,
     pub wires: WireVec<WireProperties>,
     pub connection_wires: ConnectionVec<WireId>,
     pub ports: ConnectionVec<WireName>,

@@ -1,11 +1,11 @@
-use super::{Latency, PortRole, RndPortId, RndPortVec};
-use crate::sim::module::{self, ConnectionVec, InputId, InputVec, WireName};
-use crate::sim::{ModuleId, Netlist};
+use super::{Latency, PortRole, RndPortVec};
+use crate::sim::module::{self, ConnectionVec, InputId, WireName};
+use crate::sim::ModuleId;
 use crate::type_utils::new_id;
 use fnv::FnvHashMap as HashMap;
 
 use super::yosys_ext;
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Result};
 
 use yosys_netlist_json as yosys;
 

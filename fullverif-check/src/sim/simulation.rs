@@ -1,12 +1,11 @@
-use super::fv_cells::{CombBinary, CombUnitary, Gate};
-use super::gadget::{Latency, RndPortId, Slatency};
+use super::fv_cells::CombBinary;
+use super::gadget::{RndPortId, Slatency};
 use super::recsim::{GlobInstId, NspgiId, NspgiVec};
 use super::top_sim::{GlobSimCycle, GlobSimulationState};
 use super::WireValue;
 use crate::utils::{ShareId, ShareSet};
 use anyhow::{bail, Result};
-use itertools::{izip, Itertools};
-use std::ops::Deref;
+use itertools::Itertools;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -135,41 +134,6 @@ impl RandomSource {
     }
 }
 
-/*
-impl Gate {
-    pub fn eval(
-        &self,
-        mut operands: impl Iterator<Item = (Option<WireState>, Option<WireState>)>,
-    ) -> WireState {
-        match self {
-            Gate::CombUnitary(ugate) => {
-                let op = operands.next().unwrap().1.unwrap();
-                match ugate {
-                    CombUnitary::Buf => op,
-                    CombUnitary::Not => op.negate(),
-                }
-            }
-            Gate::CombBinary(bgate) => {
-                let op0 = operands.next().unwrap().1.unwrap();
-                let op1 = operands.next().unwrap().1.unwrap();
-                bgate.sim(op0, op1)
-            }
-            Gate::Mux => {
-                let op0 = operands.next().unwrap().1.unwrap();
-                let op1 = operands.next().unwrap().1.unwrap();
-                let ops = operands.next().unwrap().1.unwrap();
-                sim_mux(op0, op1, ops)
-            }
-            Gate::Dff => {
-                let _ = operands.next().unwrap(); // C
-                let prev = operands.next().unwrap().0.unwrap(); // D
-                prev
-            }
-        }
-    }
-}
-*/
-
 impl CombBinary {
     pub fn sim(
         &self,
@@ -281,12 +245,6 @@ impl NspgiDep {
     pub fn is_larger_than(&self, other: &Self) -> bool {
         // TODO improve perf
         self == &self.max(other)
-    }
-    pub fn with_dep(&self, nspgi_id: NspgiId, lat: Slatency) -> Self {
-        let mut res = self.0.deref().clone();
-        res.extend((res.len()..=(nspgi_id + 1).index()).map(|_| None));
-        res[nspgi_id] = Some(lat);
-        Self(Rc::new(res))
     }
     pub fn last(&self, nspgi_id: NspgiId) -> Option<Slatency> {
         *self.0.get(nspgi_id)?

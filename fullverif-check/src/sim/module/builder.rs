@@ -7,7 +7,6 @@ use super::{
 use crate::sim::fv_cells::Gate;
 use crate::sim::gadget::PipelineGadget;
 use crate::sim::netlist::ModList;
-use crate::sim::recsim::PipelineGadgetState;
 use crate::sim::{ModuleId, ModuleVec};
 use anyhow::{anyhow, bail, Context, Result};
 use fnv::FnvHashMap as HashMap;
@@ -142,10 +141,6 @@ impl Module {
             ))
             .chain(module_instances.into_iter().map(Ok))
             .collect::<Result<_>>()?;
-        let instance_names = instances
-            .iter_enumerated()
-            .map(|(instance_id, instance)| (instance.name.clone(), instance_id))
-            .collect();
         let n_wires = yosys_ext::count_wires(yosys_module);
         let connection_wires = yosys_ext::connection_wires(yosys_module, &ports)?;
         let port_is_input = yosys_ext::ports_is_input(yosys_module, &ports);
@@ -166,7 +161,6 @@ impl Module {
             name: name.to_owned(),
             clock,
             instances,
-            instance_names,
             wires,
             connection_wires,
             port_is_input,
@@ -204,14 +198,6 @@ impl ModuleCombDeps {
             &eval_sorted_wires,
             modlist,
         )?;
-        let comb_inputs =
-            module
-                .output_ports
-                .iter()
-                .fold(ConnectionSet::new(), |mut set, con_id| {
-                    set.union_with(&comb_depsets[module.connection_wires[*con_id]]);
-                    set
-                });
         let comb_input_deps = comb_input_deps(
             &comb_depsets,
             &module.connection_wires,

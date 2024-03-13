@@ -1,7 +1,7 @@
 use super::ModList;
 use super::{
-    ConnectionId, ConnectionVec, Instance, InstanceType, InstanceVec, Netlist, Ports, WireId,
-    WireName, WireProperties, WireVec,
+    ConnectionId, ConnectionVec, Instance, InstanceType, Ports, WireId, WireName, WireProperties,
+    WireVec,
 };
 use crate::sim::WireValue;
 use anyhow::Result;

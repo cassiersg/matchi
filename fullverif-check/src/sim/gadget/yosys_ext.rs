@@ -39,12 +39,6 @@ pub fn get_str_module_attr<'m>(module: &'m yosys::Module, attr: &str) -> Result<
         .map(|val| attr2str(val, attr))
         .transpose()
 }
-pub fn get_str_module_attr_needed<'m>(module: &'m yosys::Module, attr: &str) -> Result<&'m str> {
-    get_str_module_attr(module, attr)?.ok_or_else(|| anyhow!("Missing module attribute {attr}."))
-}
-pub fn get_int_module_attr_needed<'m>(module: &'m yosys::Module, attr: &str) -> Result<u32> {
-    get_int_module_attr(module, attr)?.ok_or_else(|| anyhow!("Missing module attribute {attr}."))
-}
 pub fn get_int_wire_attr(module: &yosys::Module, netname: &str, attr: &str) -> Result<Option<u32>> {
     Ok(
         if let Some(attr_v) = module.netnames[netname].attributes.get(attr) {
@@ -82,13 +76,6 @@ pub fn get_str_wire_attr_needed<'m>(
         .ok_or_else(|| anyhow!("Missing attribute {attr} on wire {netname}."))
 }
 
-#[derive(Clone, Debug)]
-pub enum WireAttrs {
-    Sharing { latency: super::Latency, count: u32 },
-    Random(Option<Latency>),
-    Control(Option<Latency>),
-    Clock,
-}
 #[derive(Clone, Debug)]
 pub enum PortKind {
     SharingsDense,
@@ -190,33 +177,6 @@ pub fn wire_latency(module: &yosys::Module, netname: &str) -> Result<Latency> {
             .with_context(|| format!("Couln't get latency annotation for wire {}.", netname))?,
     ))
 }
-/// Get the type of a port.
-pub fn net_attributes(module: &yosys::Module, netname: &str, nshares: u32) -> Result<WireAttrs> {
-    let net = &module.netnames[netname];
-    let fv_type = net.attributes.get("fv_type");
-    let fv_count = get_int_wire_attr(module, netname, "fv_count")?;
-    Ok(
-        match fv_type.and_then(yosys::AttributeVal::to_string_if_string) {
-            Some("sharing") => {
-                let latency =
-                    Latency::from_raw(get_int_wire_attr_needed(module, netname, "fv_latency")?);
-                let count = fv_count.unwrap_or(1);
-                assert_eq!(count * nshares, net.bits.len() as u32);
-                WireAttrs::Sharing { latency, count }
-            }
-            Some("random") => WireAttrs::Random(
-                get_int_wire_attr(module, netname, "fv_latency")?.map(Latency::from_raw),
-            ),
-            Some("control") => WireAttrs::Control(
-                get_int_wire_attr(module, netname, "fv_latency")?.map(Latency::from_raw),
-            ),
-            Some("clock") => WireAttrs::Clock,
-            Some(s) => bail!("Unrecognized fv_type attribute '{s}' on wire {netname}."),
-            None => bail!("Missing fv_type attribute on wire {netname}."),
-        },
-    )
-}
-
 #[derive(Debug, Clone)]
 pub struct GadgetAttrs {
     pub arch: super::GadgetArch,

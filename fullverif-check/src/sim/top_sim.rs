@@ -13,14 +13,13 @@ use crate::type_utils::new_id;
 use crate::type_utils::ExtendIdx;
 use crate::utils::ShareSet;
 use anyhow::{anyhow, bail, Result};
-use itertools::izip;
 use std::collections::VecDeque;
 use std::fmt::Write;
 
 new_id!(GlobSimCycle, GlobSimCycleVec, GlobSimCycleSlice);
-impl Into<i32> for GlobSimCycle {
-    fn into(self) -> i32 {
-        self.index() as i32
+impl From<GlobSimCycle> for i32 {
+    fn from(value: GlobSimCycle) -> i32 {
+        value.index() as i32
     }
 }
 
@@ -168,29 +167,6 @@ impl Simulator {
             .get_var_offset(self.active_wire_ids[aw_id], cycle.index())
             == Some(WireValue::_1)
     }
-    /*
-    fn gadget_vcd_input_sequence<'a>(
-        &'a self,
-        netlist: &'a Netlist,
-        n_cycles: GlobSimCycle,
-    ) -> impl Iterator<Item = InputVec<WireState>> + 'a {
-        let module = netlist.module(self.module_id);
-        let mut last_exec_start = None;
-        let mut past_exec_active = false;
-        (0..n_cycles).map(move |cycle| {
-            let exec_active = self.vcd_avar(netlist.top_gadget.exec_active, cycle);
-            if exec_active && !past_exec_active {
-                last_exec_start = Some(cycle);
-            }
-            past_exec_active = exec_active;
-            module
-                .input_ports
-                .indices()
-                .map(|input_id| self.gadget_vcd_input(input_id, netlist, cycle, last_exec_start))
-                .collect()
-        })
-    }
-    */
     fn con_valid(
         &self,
         con_id: ConnectionId,
@@ -252,7 +228,7 @@ impl Simulator {
         */
     }
     pub fn simu<'s>(&'s self, netlist: &'s Netlist, n_cycles: GlobSimCycle) -> SimuIter<'s> {
-        let simu_state = self.new_state(self.evaluator.x_state(netlist), netlist);
+        let simu_state = self.new_state(self.evaluator.x_state(netlist));
         SimuIter::new(self, simu_state, netlist, n_cycles)
     }
     fn next(
@@ -288,7 +264,7 @@ impl Simulator {
         }
         self.evaluator
             .eval_finish(&mut eval_state, Some(glob_state), netlist);
-        Ok(self.new_state(eval_state, netlist))
+        Ok(self.new_state(eval_state))
     }
     fn new_glob_state(&self, netlist: &Netlist) -> GlobSimulationState {
         let gadget = &netlist.top_gadget;
@@ -299,7 +275,7 @@ impl Simulator {
             last_nonsensitive_exec: NspgiVec::new(),
         }
     }
-    fn new_state(&self, eval_state: EvaluatorState, netlist: &Netlist) -> SimulationState {
+    fn new_state(&self, eval_state: EvaluatorState) -> SimulationState {
         SimulationState { eval_state }
     }
     pub fn n_cycles(&self) -> usize {
@@ -438,7 +414,7 @@ impl<'a> SimuIter<'a> {
     fn check_output_ports(&self) -> Result<()> {
         let module = self.netlist.module(self.simulator.module_id);
         let gadget = &self.netlist.top_gadget;
-        for (output_id, con_id) in module.output_ports.iter_enumerated() {
+        for con_id in module.output_ports.iter() {
             let valid = self.simulator.con_valid(
                 *con_id,
                 self.netlist,

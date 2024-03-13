@@ -2,6 +2,7 @@
 Use control signal stability
 Check glitch-sensitivity on output, not only sensitivity.
 
+cycle progress bar, framework for error messages.
 
 
 - unused valid_in option
