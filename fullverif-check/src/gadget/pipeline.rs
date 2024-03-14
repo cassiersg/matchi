@@ -1,7 +1,8 @@
 use super::{Latency, PortRole, RndPortVec};
 use crate::module::{self, ConnectionVec, InputId, InputVec, OutputVec};
-use crate::ModuleId;
+use crate::netlist::{ModList, Netlist};
 use crate::share_set::ShareId;
+use crate::ModuleId;
 
 use super::yosys_ext;
 use anyhow::{bail, Result};
@@ -93,5 +94,9 @@ impl PipelineGadget {
             max_latency,
             max_input_latency,
         }))
+    }
+    pub fn input_maxrellat(&self, input: InputId, netlist: &Netlist) -> Latency {
+        let module = netlist.module(self.module_id);
+        self.max_input_latency - self.latency[module.input_ports[input]]
     }
 }

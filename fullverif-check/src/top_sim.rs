@@ -1,5 +1,5 @@
 use super::gadget::top::{ActiveWireId, ActiveWireVec, LatencyCondition};
-use super::gadget::{Latency, PortRole, RndPortVec, Slatency};
+use super::gadget::{Latency, PortRole, RndPortVec};
 use super::module::{ConnectionId, InputId, InputVec, WireName};
 use super::netlist::ModList;
 use super::recsim::{
@@ -9,17 +9,39 @@ use super::recsim::{
 use super::simulation::WireState;
 use super::WireValue;
 use super::{ModuleId, Netlist};
+use crate::share_set::ShareSet;
 use crate::type_utils::new_id;
 use crate::type_utils::ExtendIdx;
-use crate::share_set::ShareSet;
 use anyhow::{anyhow, bail, Result};
 use std::collections::VecDeque;
 use std::fmt::Write;
 
 new_id!(GlobSimCycle, GlobSimCycleVec, GlobSimCycleSlice);
+
+// Execution cycle of a gadget: equal to the GlobSimCycle where inputs at lat 0 are provided.
+new_id!(GadgetExecCycle);
+impl GadgetExecCycle {
+    pub fn from_global(value: GlobSimCycle) -> Self {
+        Self::from_usize(value.index())
+    }
+}
+
+/*
 impl From<GlobSimCycle> for i32 {
     fn from(value: GlobSimCycle) -> i32 {
         value.index() as i32
+    }
+}
+*/
+impl std::ops::Add<Latency> for GadgetExecCycle {
+    type Output = GadgetExecCycle;
+    fn add(self, rhs: Latency) -> GadgetExecCycle {
+        self + rhs.index()
+    }
+}
+impl GadgetExecCycle {
+    pub fn checked_sub_lat(self, lat: Latency) -> Option<Self> {
+        self.index().checked_sub(lat.index()).map(Self::from_usize)
     }
 }
 
@@ -101,11 +123,11 @@ pub struct GlobSimulationState {
     /// random value is leaked, used and stored.
     random_status: RndPortVec<RndTracker>,
     /// Current simulated clock cycle.
-    current_cycle: Option<GlobSimCycle>,
+    current_cycle: GlobSimCycle,
     /// Last "valid" execution start cycle.
     last_exec_start: Option<GlobSimCycle>,
-    /// Last "pipeline bubble" execution.
-    pub last_nonsensitive_exec: NspgiVec<Slatency>,
+    /// Last "pipeline bubble" execution. Sim
+    pub last_nonsensitive_exec: NspgiVec<Option<GadgetExecCycle>>,
 }
 
 #[derive(Debug, Clone)]
@@ -156,6 +178,7 @@ impl Simulator {
                 netlist,
                 vec![],
                 &mut EvalInstanceIds::new(),
+                vec![],
             ),
             vcd_states,
             input_vcd_ids,
@@ -238,22 +261,13 @@ impl Simulator {
         netlist: &Netlist,
     ) -> Result<SimulationState> {
         let module = netlist.module(self.module_id);
-        if let Some(cur_lat) = glob_state.current_cycle {
-            for rnd_tracker in glob_state.random_status.iter_mut() {
-                rnd_tracker.prune(cur_lat);
+        let cycle = glob_state.current_cycle;
+        if let Some(ea) = netlist.top_gadget.exec_active {
+            let exec_active = self.vcd_avar(ea, cycle);
+            let past_exec_active = cycle > 0 && self.vcd_avar(ea, cycle - 1);
+            if exec_active && !past_exec_active {
+                glob_state.last_exec_start = Some(cycle);
             }
-            glob_state.current_cycle = Some(cur_lat + 1);
-        } else {
-            glob_state.current_cycle = Some(GlobSimCycle::from_usize(0));
-        }
-        let Some(cycle) = glob_state.current_cycle else {
-            unreachable!()
-        };
-        let exec_active = self.vcd_avar(netlist.top_gadget.exec_active, cycle);
-        let past_exec_active =
-            cycle > 0 && self.vcd_avar(netlist.top_gadget.exec_active, cycle - 1);
-        if exec_active && !past_exec_active {
-            glob_state.last_exec_start = Some(cycle);
         }
         let mut eval_state = self.evaluator.init_next(&prev_state.eval_state, netlist);
         for input_id in module.input_ports.indices() {
@@ -270,7 +284,7 @@ impl Simulator {
         let gadget = &netlist.top_gadget;
         GlobSimulationState {
             random_status: RndPortVec::from_vec(vec![RndTracker::new(); gadget.rnd_ports.len()]),
-            current_cycle: None,
+            current_cycle: GlobSimCycle::from_raw(0),
             last_exec_start: None,
             last_nonsensitive_exec: NspgiVec::new(),
         }
@@ -314,19 +328,18 @@ impl GlobSimulationState {
         }
     }
     pub fn cur_lat(&self) -> GlobSimCycle {
-        self.current_cycle.unwrap()
+        self.current_cycle
     }
-    pub fn nspgi_det_exec(&mut self, nspgi_id: NspgiId) {
-        self.last_nonsensitive_exec
-            .extend_idx(nspgi_id, Slatency::MIN);
-        self.last_nonsensitive_exec[nspgi_id] = self.cur_lat().into();
+    pub fn nspgi_det_exec(&mut self, nspgi_id: NspgiId, exec_cycle: GadgetExecCycle) {
+        self.last_nonsensitive_exec.extend_idx(nspgi_id, None);
+        self.last_nonsensitive_exec[nspgi_id] = Some(exec_cycle);
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct SimuIter<'a> {
     simu_state: SimulationState,
-    glob_state: GlobSimulationState,
+    glob_state: Option<GlobSimulationState>,
     netlist: &'a Netlist,
     simulator: &'a Simulator,
     n_cycles: GlobSimCycle,
@@ -339,43 +352,53 @@ impl<'a> SimuIter<'a> {
         netlist: &'a Netlist,
         n_cycles: GlobSimCycle,
     ) -> Self {
-        let glob_state = simulator.new_glob_state(netlist);
         Self {
             simu_state,
-            glob_state,
+            glob_state: None,
             netlist,
             simulator,
             n_cycles,
         }
     }
     pub fn next(mut self) -> Result<Option<Self>> {
-        if let Some(c) = self.glob_state.current_cycle {
-            if c + 1 == self.n_cycles {
-                return Ok(None);
+        let glob_state = if let Some(mut glob_state) = self.glob_state.take() {
+            for rnd_tracker in glob_state.random_status.iter_mut() {
+                rnd_tracker.prune(glob_state.current_cycle);
             }
+            glob_state.current_cycle += 1;
+            glob_state
+        } else {
+            self.simulator.new_glob_state(self.netlist)
+        };
+        let glob_state = self.glob_state.insert(glob_state);
+        if glob_state.current_cycle == self.n_cycles {
+            return Ok(None);
         }
-        self.simu_state =
-            self.simulator
-                .next(&self.simu_state, &mut self.glob_state, self.netlist)?;
+        self.simu_state = self
+            .simulator
+            .next(&self.simu_state, glob_state, self.netlist)?;
         Ok(Some(self))
     }
     pub fn state(&self) -> &SimulationState {
         &self.simu_state
     }
     pub fn check(&mut self) -> Result<()> {
-        self.simulator.evaluator.check_safe_finish(
-            &mut self.simu_state.eval_state,
-            Some(&mut self.glob_state),
-            self.netlist,
-        )?;
-        self.check_random_uses()?;
-        self.check_output_ports()?;
+        if let Some(glob_state) = self.glob_state.as_mut() {
+            self.simulator.evaluator.check_safe_finish(
+                &mut self.simu_state.eval_state,
+                glob_state,
+                self.netlist,
+            )?;
+            self.check_random_uses()?;
+            self.check_output_ports()?;
+        }
         Ok(())
     }
     fn check_random_uses(&self) -> Result<()> {
         let module = self.netlist.module(self.simulator.module_id);
         let gadget = &self.netlist.top_gadget;
-        for (rnd_port_id, rnd_uses) in self.glob_state.random_status.iter_enumerated() {
+        let glob_state = self.glob_state.as_ref().unwrap();
+        for (rnd_port_id, rnd_uses) in glob_state.random_status.iter_enumerated() {
             for (lat, status) in rnd_uses.iter_enumerated() {
                 if !status.fresh_uses.is_empty() && status.leaks.len() > 1 {
                     let wire_name =
@@ -414,12 +437,13 @@ impl<'a> SimuIter<'a> {
     fn check_output_ports(&self) -> Result<()> {
         let module = self.netlist.module(self.simulator.module_id);
         let gadget = &self.netlist.top_gadget;
+        let glob_state = self.glob_state.as_ref().unwrap();
         for con_id in module.output_ports.iter() {
             let valid = self.simulator.con_valid(
                 *con_id,
                 self.netlist,
-                self.glob_state.current_cycle.unwrap(),
-                self.glob_state.last_exec_start,
+                glob_state.current_cycle,
+                glob_state.last_exec_start,
             );
             let wire_state = self.simu_state.eval_state.module().wire_states
                 [module.connection_wires[*con_id]]

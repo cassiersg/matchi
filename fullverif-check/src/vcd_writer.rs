@@ -13,8 +13,8 @@ struct VcdBuilder {
     next_id: vcd::IdCode,
 }
 
-pub struct VcdWriter<'w> {
-    writer: vcd::Writer<&'w mut dyn std::io::Write>,
+pub struct VcdWriter<W: std::io::Write> {
+    writer: vcd::Writer<W>,
     representations: Vec<(RepresentationTarget, VcdModuleRepresentation)>,
     timestamp: u64,
     clock: vcd::IdCode,
@@ -95,9 +95,9 @@ impl VcdBuilder {
     }
 }
 
-impl<'w> VcdWriter<'w> {
+impl<W: std::io::Write> VcdWriter<W> {
     pub fn new(
-        writer: &'w mut dyn std::io::Write,
+        writer: W,
         module_id: ModuleId,
         netlist: &Netlist,
         yosys_netlist: &yosys::Netlist,
@@ -142,7 +142,7 @@ impl<'w> VcdWriter<'w> {
         })
     }
     fn write_state(
-        writer: &mut vcd::Writer<&'w mut dyn std::io::Write>,
+        writer: &mut vcd::Writer<W>,
         representation: &VcdModuleRepresentation,
         state: &ModuleState,
         target: RepresentationTarget,

@@ -4,8 +4,13 @@ Check glitch-sensitivity on output, not only sensitivity.
 
 cycle progress bar, framework for error messages.
 
+Get back:
+- isolate strategy
+- no transitions
+- check state cleared
+- other errors from FV1?
 
-- unused valid_in option
+
 
 * Optimization: Fully-connected sharewise combinational
 * Optimization: Pipeline composite gadget

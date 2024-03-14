@@ -1,7 +1,7 @@
 use super::fv_cells::CombBinary;
-use super::gadget::{RndPortId, Slatency};
+use super::gadget::RndPortId;
 use super::recsim::{GlobInstId, NspgiId, NspgiVec};
-use super::top_sim::{GlobSimCycle, GlobSimulationState};
+use super::top_sim::{GadgetExecCycle, GlobSimCycle, GlobSimulationState};
 use super::WireValue;
 use crate::share_set::{ShareId, ShareSet};
 use anyhow::{bail, Result};
@@ -25,8 +25,9 @@ pub struct WireState {
     pub nspgi_dep: NspgiDep,
 }
 
+// The GlobSimCycle refers to the "gadget exec ref lat + max_input_lat" cycle.
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
-pub struct NspgiDep(Rc<NspgiVec<Option<Slatency>>>);
+pub struct NspgiDep(Rc<NspgiVec<Option<GadgetExecCycle>>>);
 
 impl WireState {
     fn nil() -> Self {
@@ -100,9 +101,6 @@ impl WireState {
         if self.deterministic {
             assert!(self.sensitivity.is_empty());
             assert!(self.random.is_none());
-        }
-        if self.glitch_deterministic() {
-            assert!(self.nspgi_dep.is_empty());
         }
     }
     pub fn check_secure(&self) -> Result<()> {
@@ -246,10 +244,15 @@ impl NspgiDep {
         // TODO improve perf
         self == &self.max(other)
     }
-    pub fn last(&self, nspgi_id: NspgiId) -> Option<Slatency> {
+    pub fn last(&self, nspgi_id: NspgiId) -> Option<GadgetExecCycle> {
         *self.0.get(nspgi_id)?
     }
     pub fn empty() -> Self {
         Self(Rc::new(NspgiVec::new()))
+    }
+    pub fn single(nspgi_id: NspgiId, cycle: GadgetExecCycle) -> Self {
+        let mut res = NspgiVec::from_vec(vec![None; nspgi_id.index() + 1]);
+        res[nspgi_id] = Some(cycle);
+        Self(Rc::new(res))
     }
 }

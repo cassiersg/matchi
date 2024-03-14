@@ -1,6 +1,6 @@
 use super::module::OutputVec;
-use crate::type_utils::new_id;
 use crate::share_set::ShareId;
+use crate::type_utils::new_id;
 
 use anyhow::{bail, Error, Result};
 
@@ -45,6 +45,14 @@ pub enum GadgetProp {
     // TODO: handle O-PINI gadgets.
     Opini,
 }
+impl GadgetProp {
+    pub fn requires_bubble(&self) -> bool {
+        match self {
+            GadgetProp::Pini => true,
+            GadgetProp::Opini => false,
+        }
+    }
+}
 
 /// Fullverif strategy for proving security of a gadget.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -82,8 +90,8 @@ impl TryFrom<&str> for GadgetStrat {
         Ok(match value {
             "assumed" => Self::Assumed,
             "composite_top" => Self::CompositeTop,
-            "isolate" => Self::Isolate,
-            "deep_verif" => Self::DeepVerif,
+            //"isolate" => Self::Isolate,
+            //"deep_verif" => Self::DeepVerif,
             _ => bail!("{value} is not a known verification strategy."),
         })
     }

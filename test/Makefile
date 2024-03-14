@@ -59,6 +59,6 @@ $(VCD_PATH): $(JSON)
 	$(VVP) $(SIM_PATH)
 
 fullverif: $(VCD_PATH) $(JSON)
-	$(FULLVERIF) --json $(JSON) --vcd $(VCD_PATH) --tb $(TB_MODULE) --gname $(MAIN_MODULE) --enable-sig $(ENABLE_SIG) --in-valid $(IN_VALID) --clock $(CLOCK) --dut $(DUT) --output-vcd $(WORK)/out.vcd
+	$(FULLVERIF) --json $(JSON) --vcd $(VCD_PATH) --tb $(TB_MODULE) --gname $(MAIN_MODULE) --dut $(DUT) --output-vcd $(WORK)/out.vcd
 
 .PHONY: fullverif

@@ -5,7 +5,7 @@ use super::{ModuleId, ModuleVec};
 use fnv::FnvHashMap as HashMap;
 use yosys_netlist_json as yosys;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
 pub trait ModList {
     fn module(&self, module_id: ModuleId) -> &Module;
@@ -53,7 +53,10 @@ impl Netlist {
         let Some(top_gadget_id) = builder.id_of(top_gadget) else {
             bail!("Top module {top_gadget} not found in the netlist.");
         };
-        let top_gadget = TopGadget::new(builder.module(top_gadget_id), netlist)?;
+        let top_gadget =
+            TopGadget::new(builder.module(top_gadget_id), netlist).with_context(|| {
+                format!("Couln't build top-level gadget representation for {top_gadget}")
+            })?;
         Ok(Netlist {
             gadgets: builder.gadgets,
             modules: builder.modules,

@@ -1,11 +1,11 @@
-use super::{Latency, PortRole, RndPortVec};
+use super::{GadgetArch, GadgetProp, GadgetStrat, Latency, PortRole, RndPortVec};
 use crate::module::{self, ConnectionVec, InputId, WireName};
-use crate::ModuleId;
 use crate::type_utils::new_id;
+use crate::ModuleId;
 use fnv::FnvHashMap as HashMap;
 
 use super::yosys_ext;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 
 use yosys_netlist_json as yosys;
 
@@ -22,16 +22,12 @@ pub struct TopGadget {
     pub port_roles: ConnectionVec<PortRole>,
     /// Latency associated to each connection wire (including control, excluding clock).
     pub latency: ConnectionVec<Option<LatencyCondition>>,
-    /// Security property
-    pub prop: super::GadgetProp,
-    /// Strategy to be used to prove the security
-    pub strat: super::GadgetStrat,
     /// Number of shares
     pub nshares: u32,
     /// randomness ports
     pub rnd_ports: RndPortVec<InputId>,
     /// Active-high signal denoting active execution.
-    pub exec_active: ActiveWireId,
+    pub exec_active: Option<ActiveWireId>,
     /// Map of ActiveWireId to the corresponding WireName.
     pub active_wires: ActiveWireVec<WireName>,
 }
@@ -69,33 +65,27 @@ impl LatencyCondition {
         yosys_module: &yosys::Module,
         netname: &str,
         awbuilder: &mut ActiveWireBuilder,
+        allow_relative_lat: bool,
     ) -> Result<Option<Self>> {
-        let lat_cond = yosys_ext::get_str_wire_attr(yosys_module, netname, "fv_latcond")?;
         let lat = yosys_ext::get_int_wire_attr(yosys_module, netname, "fv_lat")?;
-        match (lat_cond, lat) {
-            (Some("always"), _) => Ok(Some(Self::Always)),
-            (Some("never"), _) => Ok(Some(Self::Never)),
-            (Some("on_active"), _) => {
-                let refsig =
-                    yosys_ext::get_str_wire_attr_needed(yosys_module, netname, "fv_refsig")?;
-                Ok(Some(Self::OnActive(SimSignal(
-                    awbuilder.add_wire(refsig.to_owned()),
-                ))))
+        let active = yosys_ext::get_str_wire_attr(yosys_module, netname, "fv_active")?;
+        match (active, lat, allow_relative_lat) {
+            (Some("1"), None, _) => Ok(Some(Self::Always)),
+            (Some("0"), None, _) => Ok(Some(Self::Never)),
+            (Some(refsig), None, _) => Ok(Some(Self::OnActive(SimSignal(
+                awbuilder.add_wire(refsig.to_owned()),
+            )))),
+            (None, Some(lat), true) => Ok(Some(Self::Lats(vec![Latency::from_raw(lat)]))),
+            (None, Some(_), false) => {
+                bail!("'fv_lat' annotation given on wire {}, but not gadget-level 'fv_active' is given.", netname);
             }
-            (Some("fixed"), Some(lat)) | (None, Some(lat)) => {
-                Ok(Some(Self::Lats(vec![Latency::from_raw(lat)])))
-            }
-            (Some("fixed"), None) => {
-                bail!("Missing attribute 'fv_lat' on wire {}", netname);
-            }
-            (Some(lat_cond), _) => {
+            (Some(_), Some(_), _) => {
                 bail!(
-                    "Unknown latency condition '{}' for wire {}.",
-                    lat_cond,
+                    "Conflicting 'fv_lat' and 'fv_active' annotations on wire {}",
                     netname
                 );
             }
-            (None, None) => Ok(None),
+            (None, None, _) => Ok(None),
         }
     }
 }
@@ -128,31 +118,41 @@ impl TopGadget {
             .map(|(_, input_id)| input_id)
             .collect::<RndPortVec<_>>();
         let mut awbuilder = ActiveWireBuilder::default();
+        let exec_active = builder
+            .gadget_attrs
+            .exec_active
+            .map(|aw| awbuilder.add_wire(aw));
         let latency = std::iter::zip(&module.ports, &port_roles)
             .map(|(wire_name, port_role)| {
-                let cond = LatencyCondition::new(yosys_module, wire_name.name(), &mut awbuilder)?;
+                let cond = LatencyCondition::new(
+                    yosys_module,
+                    wire_name.name(),
+                    &mut awbuilder,
+                    exec_active.is_some(),
+                )?;
                 if cond.is_none() && matches!(port_role, PortRole::Share(_) | PortRole::Random(_)) {
                     bail!(
-                        "Missing 'fv_latcond' attribute for wire {}.",
+                        "Missing active information for share or randomness wire {}.",
                         wire_name.name()
                     );
                 }
                 Ok(cond)
             })
             .collect::<Result<ConnectionVec<_>>>()?;
-        let exec_active = awbuilder.add_wire(
-            builder
-                .gadget_attrs
-                .exec_active
-                .ok_or_else(|| anyhow!("Missing 'fv_active' annotation on top-level module."))?,
-        );
+        if builder.gadget_attrs.strat != GadgetStrat::CompositeTop {
+            bail!("Top-level gadget must have 'composite_top' verification strategy.");
+        }
+        if builder.gadget_attrs.arch != GadgetArch::Loopy {
+            bail!("Cannot verify 'pipeline' top-level gadgets.");
+        }
+        if builder.gadget_attrs.prop != GadgetProp::Pini {
+            bail!("Cannot verify non-'PINI' top-level gadgets.");
+        }
         Ok(Self {
             module_id: module.id,
             port_roles,
             latency,
             rnd_ports,
-            prop: builder.gadget_attrs.prop,
-            strat: builder.gadget_attrs.strat,
             nshares: builder.gadget_attrs.nshares,
             exec_active,
             active_wires: awbuilder.active_wires,

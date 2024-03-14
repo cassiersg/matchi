@@ -175,7 +175,7 @@ impl Module {
 impl ModuleCombDeps {
     pub fn new(module_id: ModuleId, modlist: &impl ModList) -> Result<Self> {
         let module = modlist.module(module_id);
-        eprintln!("Sorting wires for module {}", module.name);
+        //eprintln!("Sorting wires for module {}", module.name);
         let comb_wire_dag = comb_wire_dag(&module.instances, &module.wires, modlist)?;
         /*
         std::fs::write(
