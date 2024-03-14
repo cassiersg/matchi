@@ -1,0 +1,25 @@
+
+
+Use control signal stability (require annotations that a control signal is glitch-free). (*msk_glitch_free="assume" *) (* msk_glitch_free="assert" *).
+
+Check glitch-sensitivity on output, not only sensitivity.
+
+Cycle count progress bar, framework for error messages.
+
+annotation in separate files
+
+assumption on non-marked DFF: stop glitches or not ?
+
+check pipeline structure for pipeline gadgets, and latency annotations
+
+Get back:
+- isolate strategy
+- no transitions
+- check state cleared
+- other errors from FV1?
+
+
+
+* Optimization: Fully-connected sharewise combinational
+* Optimization: Pipeline composite gadget
+

@@ -1,5 +1,5 @@
-use super::module::{ConnectionId, InputSlice, OutputSlice, WireName};
-use super::WireValue;
+use super::{ConnectionId, InputSlice, OutputSlice, WireName};
+use crate::WireValue;
 use anyhow::{bail, Result};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,7 +42,7 @@ impl std::str::FromStr for Gate {
             //            "XNOR" => Self::CombBinary(Xnor),
             "MUX" => Self::Mux,
             "DFF" => Self::Dff,
-            _ => bail!("'{}' is not a fv_cells gate.", s),
+            _ => bail!("'{}' is not a matchi_cells gate.", s),
         })
     }
 }

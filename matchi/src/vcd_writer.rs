@@ -126,7 +126,7 @@ impl<W: std::io::Write> VcdWriter<W> {
                 Ok((representation_target, representation))
             })
             .collect::<Result<Vec<_>>>()?;
-        writer.add_module("fv_debug_mod")?;
+        writer.add_module("matchi_debug_mod")?;
         let clock = writer.add_wire(1, "clock")?;
         let cycle_count = writer.add_wire(32, "cycle_count")?;
         writer.upscope()?;

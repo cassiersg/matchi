@@ -1,5 +1,5 @@
-use super::super::fv_cells::Gate;
 use super::super::netlist::ModList;
+use super::gates::Gate;
 use super::ModuleId;
 use anyhow::{bail, Result};
 use yosys_netlist_json as yosys;
@@ -33,7 +33,7 @@ impl InstanceType {
             InstanceType::Gate(gate)
         } else {
             bail!(
-                "Cell type '{}' is not a gadget, nor a fv_cell gate.",
+                "Cell type '{}' is not a gadget, nor a matchi_cells gate.",
                 cell.cell_type
             )
         })

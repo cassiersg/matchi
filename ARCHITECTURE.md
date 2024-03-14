@@ -5,11 +5,7 @@ Its main inputs are the netlist, and a vcd file, from which we extract the
 inputs of the top-level module (as well as some other control signal that are
 metadata for the symbolic input values).
 
-The implementation is based on two rust crates (TODO: cut in a single one ?): a
-library and a binary. The binary `main.rs` is an empty shell that calls the main function
-of the library.
-
-The library `lib.rs` parses the command-line arguments (`config.rs`), opens the
+The top-level `main.rs` parses the command-line arguments (`config.rs`), opens the
 netlist and input vcd file, then drives the simulation and writes the output
 vcd file (`vcd_writer.rs`).
 

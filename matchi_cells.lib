@@ -1,4 +1,4 @@
-library(fv_cells) {
+library(matchi_cells) {
   cell(BUF) {
     area: 3;
     pin(A) { direction: input; }

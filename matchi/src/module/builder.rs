@@ -1,10 +1,10 @@
+use super::gates::Gate;
 use super::yosys_ext;
 use super::{
     ConnectionSet, ConnectionVec, InputId, InputVec, Instance, InstanceId, InstanceType,
     InstanceVec, Module, ModuleCombDeps, OutputId, OutputVec, WireGraph, WireId, WireProperties,
     WireVec,
 };
-use crate::fv_cells::Gate;
 use crate::gadget::PipelineGadget;
 use crate::netlist::ModList;
 use crate::{ModuleId, ModuleVec};

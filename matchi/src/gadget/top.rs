@@ -67,8 +67,8 @@ impl LatencyCondition {
         awbuilder: &mut ActiveWireBuilder,
         allow_relative_lat: bool,
     ) -> Result<Option<Self>> {
-        let lat = yosys_ext::get_int_wire_attr(yosys_module, netname, "fv_lat")?;
-        let active = yosys_ext::get_str_wire_attr(yosys_module, netname, "fv_active")?;
+        let lat = yosys_ext::get_int_wire_attr(yosys_module, netname, "matchi_lat")?;
+        let active = yosys_ext::get_str_wire_attr(yosys_module, netname, "matchi_active")?;
         match (active, lat, allow_relative_lat) {
             (Some("1"), None, _) => Ok(Some(Self::Always)),
             (Some("0"), None, _) => Ok(Some(Self::Never)),
@@ -77,11 +77,11 @@ impl LatencyCondition {
             )))),
             (None, Some(lat), true) => Ok(Some(Self::Lats(vec![Latency::from_raw(lat)]))),
             (None, Some(_), false) => {
-                bail!("'fv_lat' annotation given on wire {}, but not gadget-level 'fv_active' is given.", netname);
+                bail!("'matchi_lat' annotation given on wire {}, but not gadget-level 'matchi_active' is given.", netname);
             }
             (Some(_), Some(_), _) => {
                 bail!(
-                    "Conflicting 'fv_lat' and 'fv_active' annotations on wire {}",
+                    "Conflicting 'matchi_lat' and 'matchi_active' annotations on wire {}",
                     netname
                 );
             }

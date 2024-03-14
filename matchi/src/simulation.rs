@@ -1,5 +1,5 @@
-use super::fv_cells::CombBinary;
 use super::gadget::RndPortId;
+use super::module::gates::CombBinary;
 use super::recsim::{GlobInstId, NspgiId, NspgiVec};
 use super::top_sim::{GadgetExecCycle, GlobSimCycle, GlobSimulationState};
 use super::WireValue;

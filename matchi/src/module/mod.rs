@@ -6,6 +6,7 @@ use anyhow::{bail, Result};
 use yosys_netlist_json as yosys;
 
 mod builder;
+pub mod gates;
 mod instance;
 mod yosys_ext;
 

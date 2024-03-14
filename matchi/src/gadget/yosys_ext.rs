@@ -88,7 +88,7 @@ pub enum PortKind {
 impl PortKind {
     fn new(module: &yosys::Module, netname: &str, nshares: u32) -> Result<Self> {
         let net = &module.netnames[netname];
-        let fv_type = net.attributes.get("fv_type");
+        let matchi_type = net.attributes.get("matchi_type");
         let check_port_width = || {
             let port_width: u32 = net.bits.len().try_into().unwrap();
             if port_width % nshares == 0 {
@@ -98,7 +98,7 @@ impl PortKind {
             }
         };
         Ok(
-            match fv_type.and_then(yosys::AttributeVal::to_string_if_string) {
+            match matchi_type.and_then(yosys::AttributeVal::to_string_if_string) {
                 // TODO: remove this, we keep it here for backcompat.
                 Some("sharing") | Some("sharings_dense") => {
                     check_port_width()?;
@@ -108,8 +108,11 @@ impl PortKind {
                     stride: check_port_width()? / nshares,
                 },
                 Some("share") => {
-                    let share_id =
-                        ShareId::from_raw(get_int_wire_attr_needed(module, netname, "fv_share")?);
+                    let share_id = ShareId::from_raw(get_int_wire_attr_needed(
+                        module,
+                        netname,
+                        "matchi_share",
+                    )?);
                     PortKind::Share { share_id }
                 }
                 Some("random") => PortKind::Random,
@@ -120,8 +123,8 @@ impl PortKind {
                     }
                     PortKind::Clock
                 }
-                Some(s) => bail!("Unrecognized fv_type attribute '{s}' on wire {netname}."),
-                None => bail!("Missing fv_type attribute on wire {netname}."),
+                Some(s) => bail!("Unrecognized matchi_type attribute '{s}' on wire {netname}."),
+                None => bail!("Missing matchi_type attribute on wire {netname}."),
             },
         )
     }
@@ -173,7 +176,7 @@ impl<'a> ModulePortKinds<'a> {
 }
 pub fn wire_latency(module: &yosys::Module, netname: &str) -> Result<Latency> {
     Ok(Latency::from_raw(
-        get_int_wire_attr_needed(module, netname, "fv_latency")
+        get_int_wire_attr_needed(module, netname, "matchi_latency")
             .with_context(|| format!("Couln't get latency annotation for wire {}.", netname))?,
     ))
 }
@@ -189,10 +192,10 @@ pub struct GadgetAttrs {
 impl GadgetAttrs {
     pub fn new(yosys_module: &yosys::Module) -> Result<Option<Self>> {
         match (
-        get_str_module_attr(yosys_module, "fv_arch")?,
-        get_int_module_attr(yosys_module, "fv_order")?,
-        get_str_module_attr(yosys_module, "fv_prop")?,
-        get_str_module_attr(yosys_module, "fv_strat")?
+        get_str_module_attr(yosys_module, "matchi_arch")?,
+        get_int_module_attr(yosys_module, "matchi_order")?,
+        get_str_module_attr(yosys_module, "matchi_prop")?,
+        get_str_module_attr(yosys_module, "matchi_strat")?
             ) {
                 (Some(arch), Some(nshares), Some(prop), Some(strat)) => {
                     Ok(Some(Self{
@@ -200,11 +203,11 @@ impl GadgetAttrs {
                         nshares,
                         prop: prop.try_into()?,
                         strat: strat.try_into()?,
-                        exec_active: get_str_module_attr(yosys_module, "fv_active")?.map(ToOwned::to_owned),
+                        exec_active: get_str_module_attr(yosys_module, "matchi_active")?.map(ToOwned::to_owned),
                     }))
                 }
                 (None, None, None, None) => Ok(None),
-                _ => bail!("All (or none) of 'fv_arch', 'fv_order', 'fv_prop' and 'fv_strat' module attributes must be given.")
+                _ => bail!("All (or none) of 'matchi_arch', 'matchi_order', 'matchi_prop' and 'matchi_strat' module attributes must be given.")
             }
     }
 }

@@ -14,9 +14,9 @@ pub struct Config {
     #[arg(long)]
     /// Path to the output symbolic execution vcd.
     pub output_vcd: Option<String>,
-    #[arg(long)]
-    /// Testbench module name.
-    pub tb: String,
+    // #[arg(long)]
+    // /// Testbench module name.
+    // pub tb: String,
     #[arg(long)]
     /// Main gadget module name.
     pub gname: String,

@@ -12,7 +12,6 @@ mod config;
 #[macro_use]
 mod type_utils;
 mod clk_vcd;
-mod fv_cells;
 mod gadget;
 mod module;
 mod netlist;
@@ -39,15 +38,11 @@ fn signal_path(module: &[String], sig_name: &str) -> Vec<String> {
 }
 
 /// Verify that the top-level gadets (and all sub-gadgets) satisfy the rules.
-fn check_gadget_top<'a>(
-    netlist: &'a yosys::Netlist,
-    root_simu_mod: Vec<String>,
-    config: &'a config::Config,
-) -> Result<()> {
+fn check_gadget_top<'a>(netlist: &'a yosys::Netlist, config: &'a config::Config) -> Result<()> {
     println!("building netlist...");
     let gadget_name = config.gname.as_str();
     let netlist_sim = Netlist::new(netlist, gadget_name)?;
-    let dut_path = signal_path(root_simu_mod.as_slice(), config.dut.as_str());
+    let dut_path = signal_path(&[], config.dut.as_str());
 
     println!("initializing sim vcd states...");
     let mut vcd_file = open_simu_vcd(config)?;
@@ -103,7 +98,6 @@ pub fn main() -> Result<()> {
         .map_err(|_| anyhow!("Did not find the result of synthesis '{}'.", &config.json))?;
     let file_synth = BufReader::new(file_synth);
     let netlist = yosys::Netlist::from_reader(file_synth)?;
-    let root_simu_mod = signal_path(&[], config.tb.as_str());
-    check_gadget_top(&netlist, root_simu_mod, &config)?;
+    check_gadget_top(&netlist, &config)?;
     Ok(())
 }

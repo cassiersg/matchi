@@ -1,9 +1,8 @@
 [package]
-name = "fullverif"
+name = "matchi"
 version = "0.1.0"
 authors = ["Gaëtan Cassiers <gaetan.cassiers@uclouvain.be>"]
 edition = "2021"
-about = "Composition-based verification of masked hardware circuits."
 
 [dependencies]
 itertools = "0.12"
@@ -17,8 +16,6 @@ vcd = { git = "https://github.com/cassiersg/rust-vcd.git", branch = "idcode" } #
 #vcd = "0.7.0"
 yosys-netlist-json = "0.1.0"
 clap = { version = "4.4", features = ["derive"] }
-derivative = "2.2"
-derive_more = "0.99"
 fnv = "1.0.7"
 
 anyhow = "1.0"
@@ -27,9 +24,6 @@ indexmap = "2.2.2"
 bit-set = "0.5.3"
 enum_dispatch = "0.3.12"
 
-#flame = { version = "0.2.2", optional = true }
-#flamer = { version = "0.3", optional = true }
-
 #[profile.dev]
 #opt-level = 1
 #debug = 0
@@ -37,8 +31,3 @@ enum_dispatch = "0.3.12"
 #[profile.release]
 #debug = true
 #lto = true
-
-
-#[features]
-#default = []
-#flame_it = ["flame", "flamer"]

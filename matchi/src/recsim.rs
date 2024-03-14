@@ -15,8 +15,8 @@
 //     - can also be pre-calculated
 //     - for the pre-calculation: iterate over wires, and eval them using the DfsPostOrder
 //
-use super::fv_cells::{CombUnitary, Gate};
 use super::gadget::{Latency, LatencyVec, PortRole};
+use super::module::gates::{CombUnitary, Gate};
 use super::module::{
     ConnectionId, InputId, InputVec, InstanceId, InstanceType, InstanceVec, OutputId, WireId,
     WireVec,
@@ -138,7 +138,7 @@ pub struct ModuleEvaluator {
 
 #[derive(Debug, Clone)]
 struct GateEvaluator {
-    gate: super::fv_cells::Gate,
+    gate: Gate,
     inst_id: GlobInstId,
 }
 
