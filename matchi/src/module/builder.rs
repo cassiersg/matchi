@@ -74,12 +74,13 @@ impl ModListBuilder {
 
 fn sort_modules(yosys_netlist: &yosys::Netlist) -> Result<Vec<&str>> {
     let mut graph = petgraph::Graph::new();
-    let name2id = yosys_netlist
-        .modules
-        .keys()
+    let mut module_names = yosys_netlist.modules.keys().collect::<Vec<_>>();
+    module_names.sort_unstable();
+    let name2id = module_names
+        .iter()
         // Exclude Gates from the module list.
         .filter(|name| !Gate::is_gate(name))
-        .map(|name| (name, graph.add_node(name)))
+        .map(|name| (*name, graph.add_node(name)))
         .collect::<HashMap<_, _>>();
     for module_name in name2id.keys() {
         for (cell_name, cell) in yosys_netlist.modules[*module_name].cells.iter() {
@@ -146,7 +147,7 @@ impl Module {
         let port_is_input = yosys_ext::ports_is_input(yosys_module, &ports);
         let wires_output_connection =
             yosys_ext::wires_output_connection(yosys_module, n_wires, &output_ports, &ports)?;
-        let wires_source = wires_source(n_wires, &instances, modlist)?;
+        let wires_source = wires_source(yosys_module, n_wires, &instances, modlist)?;
         let wire_sinks = wires_sinks(n_wires, &instances, modlist);
         let wires = itertools::izip!(wires_source, wires_output_connection, wire_sinks)
             .map(|(source, output, sinks)| WireProperties {
@@ -230,6 +231,7 @@ fn module_clock_wire(
     Ok(clocks.pop_first())
 }
 fn wires_source(
+    yosys_module: &yosys::Module,
     n_wires: usize,
     instances: &InstanceVec<Instance>,
     netlist: &impl ModList,
@@ -245,7 +247,7 @@ fn wires_source(
             if let Some(other_instance) = sources[wire] {
                 bail!(
                     "Wire {} is an output of both {} and {}.",
-                    wire,
+                    yosys_ext::wire_name(yosys_module, wire),
                     instances[other_instance.0].name,
                     instance.name
                 );
@@ -261,8 +263,8 @@ fn wires_source(
                 Ok(inst)
             } else {
                 bail!(
-                    "Wire {} is not the output of any cell, nor a module input.",
-                    wire
+                    "Could not find driver for wire {}.",
+                    yosys_ext::wire_name(yosys_module, wire),
                 )
             }
         })

@@ -167,3 +167,21 @@ pub fn wire_names(
     }
     res
 }
+
+pub fn wire_name(module: &yosys::Module, wire: WireId) -> WireName {
+    if wire == WireId::from_raw(0) {
+        return WireName::new("TIELO".to_owned(), 0);
+    }
+    if wire == WireId::from_raw(1) {
+        return WireName::new("TIEHI".to_owned(), 0);
+    }
+    for (name, netname) in module.netnames.iter() {
+        for (offset, bitval) in netname.bits.iter().enumerate() {
+            let wire_id: WireId = (*bitval).try_into().unwrap();
+            if wire_id == wire {
+                return WireName::new(name.clone(), offset);
+            }
+        }
+    }
+    unreachable!("No netname for wire id {}", wire);
+}

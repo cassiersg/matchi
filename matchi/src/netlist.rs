@@ -65,12 +65,6 @@ impl Netlist {
             top_gadget,
         })
     }
-}
-
-impl Netlist {
-    pub fn id_of(&self, module_name: impl AsRef<str>) -> Option<ModuleId> {
-        self.names.get(module_name.as_ref()).copied()
-    }
     pub fn gadget(&self, module_id: ModuleId) -> Option<&PipelineGadget> {
         self.gadgets[module_id].as_ref()
     }
