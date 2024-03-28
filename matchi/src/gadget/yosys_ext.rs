@@ -193,7 +193,7 @@ impl GadgetAttrs {
     pub fn new(yosys_module: &yosys::Module) -> Result<Option<Self>> {
         match (
         get_str_module_attr(yosys_module, "matchi_arch")?,
-        get_int_module_attr(yosys_module, "matchi_order")?,
+        get_int_module_attr(yosys_module, "matchi_shares")?,
         get_str_module_attr(yosys_module, "matchi_prop")?,
         get_str_module_attr(yosys_module, "matchi_strat")?
             ) {
@@ -207,7 +207,7 @@ impl GadgetAttrs {
                     }))
                 }
                 (None, None, None, None) => Ok(None),
-                _ => bail!("All (or none) of 'matchi_arch', 'matchi_order', 'matchi_prop' and 'matchi_strat' module attributes must be given.")
+                _ => bail!("All (or none) of 'matchi_arch', 'matchi_shares', 'matchi_prop' and 'matchi_strat' module attributes must be given.")
             }
     }
 }
