@@ -56,7 +56,7 @@ impl<R: std::io::BufRead> VcdParsedHeader<R> {
         let res = self
             .var_names
             .get_mut(path)
-            .ok_or_else(|| anyhow!("No variable {:?} in vcd.", path))?;
+            .ok_or_else(|| anyhow!("No variable {} in vcd.", path.join(".")))?;
         Ok(*res
             .1
             .get_or_insert_with(|| self.used_vars.push(res.0.clone())))
@@ -65,8 +65,8 @@ impl<R: std::io::BufRead> VcdParsedHeader<R> {
         let var_id = self.add_var(path)?;
         if offset >= self.used_vars[var_id].size as usize {
             bail!(
-                "Cannot index variable {:?} at offset {}: not long enough",
-                path,
+                "Cannot index variable {} at offset {}: not long enough",
+                path.join("."),
                 offset
             );
         }

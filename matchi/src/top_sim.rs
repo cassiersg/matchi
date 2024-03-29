@@ -12,7 +12,7 @@ use super::{ModuleId, Netlist};
 use crate::share_set::ShareSet;
 use crate::type_utils::new_id;
 use crate::type_utils::ExtendIdx;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use std::collections::VecDeque;
 use std::fmt::Write;
 
@@ -163,13 +163,15 @@ impl Simulator {
             .input_ports
             .iter()
             .map(|con_id| add_var(&module.ports[*con_id]))
-            .collect::<Result<InputVec<_>>>()?;
+            .collect::<Result<InputVec<_>>>()
+            .with_context(|| "Error while looking up input ports in vcd.")?;
         let active_wire_ids = netlist
             .top_gadget
             .active_wires
             .iter()
             .map(add_var)
-            .collect::<Result<ActiveWireVec<_>>>()?;
+            .collect::<Result<ActiveWireVec<_>>>()
+            .with_context(|| "Error while looking up 'matchi_active' signals in vcd.")?;
         let vcd_states = vcd_parsed_header.get_states()?;
         Ok(Self {
             module_id,

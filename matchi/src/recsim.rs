@@ -618,16 +618,20 @@ impl Evaluator for PipelineGadgetEvaluator {
                 module.ports[module.input_ports[input]],
             )
         })?;
-        if gadget.prop.requires_bubble()
+        if !crate::config::config().no_check_transitions
+            && gadget.prop.requires_bubble()
             && wire_state.nspgi_dep.last(self.nspgi_id).is_some_and(|dep| {
                 sim_state.last_nonsensitive_exec[self.nspgi_id]
                     .map(|last| last < dep)
                     .unwrap_or(true)
             })
         {
-            bail!("Input {} depends on a previous execution of this gadget, there was no pipeline bubble since then.",
+            bail!(
+                "Transition leakage failure: Input {} of gadget {} depends on a previous \
+                execution of this gadget, there was no pipeline bubble since then.",
                 module.ports[module.input_ports[input]],
-        );
+                module.name
+            );
         }
         Ok(())
     }
@@ -946,14 +950,22 @@ impl ModuleEvaluator {
         sim_state: &mut GlobSimulationState,
         netlist: &Netlist,
     ) -> Result<()> {
-        for (instance_id, input_id) in &netlist.module(self.module_id).wires[wire].sinks {
+        let module = netlist.module(self.module_id);
+        for (instance_id, input_id) in &module.wires[wire].sinks {
             if let Some(sub_evaluator) = &self.instance_evaluators[*instance_id] {
-                sub_evaluator.check_safe_input(
-                    state.instance_states[*instance_id].as_mut().unwrap(),
-                    sim_state,
-                    *input_id,
-                    netlist,
-                )?;
+                sub_evaluator
+                    .check_safe_input(
+                        state.instance_states[*instance_id].as_mut().unwrap(),
+                        sim_state,
+                        *input_id,
+                        netlist,
+                    )
+                    .with_context(|| {
+                        format!(
+                            "while checking instance {}",
+                            module.instances[*instance_id].name
+                        )
+                    })?;
             }
         }
         Ok(())

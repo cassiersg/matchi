@@ -38,14 +38,14 @@ fn signal_path(module: &[String], sig_name: &str) -> Vec<String> {
 }
 
 /// Verify that the top-level gadets (and all sub-gadgets) satisfy the rules.
-fn check_gadget_top<'a>(netlist: &'a yosys::Netlist, config: &'a config::Config) -> Result<()> {
+fn check_gadget_top<'a>(netlist: &'a yosys::Netlist) -> Result<()> {
     println!("building netlist...");
-    let gadget_name = config.gname.as_str();
+    let gadget_name = config::config().gname.as_str();
     let netlist_sim = Netlist::new(netlist, gadget_name)?;
-    let dut_path = signal_path(&[], config.dut.as_str());
+    let dut_path = signal_path(&[], config::config().dut.as_str());
 
     println!("initializing sim vcd states...");
-    let mut vcd_file = open_simu_vcd(config)?;
+    let mut vcd_file = open_simu_vcd()?;
     let vcd_parser = vcd::Parser::new(&mut vcd_file);
     // Simulation using recsim
     println!("Starting simu");
@@ -53,7 +53,7 @@ fn check_gadget_top<'a>(netlist: &'a yosys::Netlist, config: &'a config::Config)
     let n_cycles = simulator.n_cycles();
     let mut sim_states_iter =
         simulator.simu(&netlist_sim, top_sim::GlobSimCycle::from_usize(n_cycles));
-    let mut vcd_writer = config
+    let mut vcd_writer = config::config()
         .output_vcd
         .as_ref()
         .map(|fname| {
@@ -82,22 +82,25 @@ fn check_gadget_top<'a>(netlist: &'a yosys::Netlist, config: &'a config::Config)
     Ok(())
 }
 
-fn open_simu_vcd(config: &config::Config) -> Result<std::io::BufReader<std::fs::File>> {
-    let file_simu = File::open(&config.vcd).map_err(|_| {
+fn open_simu_vcd() -> Result<std::io::BufReader<std::fs::File>> {
+    let file_simu = File::open(&config::config().vcd).map_err(|_| {
         anyhow!(
             "Did not find the vcd file: '{}'.\nPlease check your testbench and simulator commands.",
-            &config.vcd
+            &config::config().vcd
         )
     })?;
     Ok(BufReader::new(file_simu))
 }
 
 pub fn main() -> Result<()> {
-    let config = config::parse_cmd_line();
-    let file_synth = File::open(&config.json)
-        .map_err(|_| anyhow!("Did not find the result of synthesis '{}'.", &config.json))?;
+    let file_synth = File::open(&config::config().json).map_err(|_| {
+        anyhow!(
+            "Did not find the result of synthesis '{}'.",
+            &config::config().json
+        )
+    })?;
     let file_synth = BufReader::new(file_synth);
     let netlist = yosys::Netlist::from_reader(file_synth)?;
-    check_gadget_top(&netlist, &config)?;
+    check_gadget_top(&netlist)?;
     Ok(())
 }

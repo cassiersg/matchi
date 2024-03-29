@@ -31,6 +31,8 @@ pub struct Config {
     pub no_check_transitions: bool,
 }
 
-pub fn parse_cmd_line() -> Config {
-    Config::parse()
+pub fn config() -> &'static Config {
+    CONFIG.get_or_init(Config::parse)
 }
+
+static CONFIG: std::sync::OnceLock<Config> = std::sync::OnceLock::new();
