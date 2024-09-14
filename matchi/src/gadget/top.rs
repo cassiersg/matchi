@@ -117,6 +117,12 @@ impl TopGadget {
             .into_iter()
             .map(|(_, input_id)| input_id)
             .collect::<RndPortVec<_>>();
+        for (id, port) in rnd_ports.iter_enumerated() {
+            eprintln!(
+                "rnd port id: {:?} name: {}",
+                id, module.ports[module.input_ports[*port]]
+            );
+        }
         let mut awbuilder = ActiveWireBuilder::default();
         let exec_active = builder
             .gadget_attrs

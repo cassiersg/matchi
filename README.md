@@ -126,7 +126,7 @@ of the shares.
 
 All the sharing/share and random ports must additionally provide activity
 information through the `matchi_active` attribute. The value is the name of a (single-bit) net
-in the module, e.g., `matchi_active=input_valid`. This net must be included in the
+in the module, e.g., `matchi_active="input_valid"`. This net must be included in the
 vcd, and its value is used to determine the symbolic properties of the port.
 For all clock cycles where the `matchi_active` net is `1`:
 

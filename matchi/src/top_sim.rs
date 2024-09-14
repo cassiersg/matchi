@@ -280,6 +280,7 @@ impl Simulator {
         }
         self.evaluator
             .eval_finish(&mut eval_state, Some(glob_state), netlist);
+        //self.evaluator.debug_state(&eval_state, netlist);
         Ok(self.new_state(eval_state))
     }
     fn new_glob_state(&self, netlist: &Netlist) -> GlobSimulationState {
@@ -316,6 +317,12 @@ impl GlobSimulationState {
     }
     pub fn use_random(&mut self, wire: &WireState, inst: GlobInstId, cycle_offset: Latency) {
         if let Some(rnd_source) = wire.random.as_ref() {
+            eprintln!(
+                "use random port: {:?}, lat: {:?}, cur_lat: {:?}",
+                rnd_source.port,
+                rnd_source.lat,
+                self.cur_lat()
+            );
             let cur_lat = self.cur_lat();
             self.random_status[rnd_source.port]
                 .get_mut(rnd_source.lat)
@@ -324,6 +331,14 @@ impl GlobSimulationState {
     }
     pub fn store_random(&mut self, wire: &WireState) {
         if let Some(rnd_source) = wire.random.as_ref() {
+            /*
+            eprintln!(
+                "store random port: {:?}, lat: {:?}, cur_lat: {:?}",
+                rnd_source.port,
+                rnd_source.lat,
+                self.cur_lat()
+            );
+            */
             self.random_status[rnd_source.port]
                 .get_mut(rnd_source.lat)
                 .last_stored = Some(self.cur_lat());

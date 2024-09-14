@@ -114,6 +114,7 @@ pub trait Evaluator {
     fn glob_inst2path(&self, ginst: GlobInstId, netlist: &Netlist) -> Option<String> {
         None
     }
+    fn debug_state(&self, state: &EvaluatorState, netlist: &Netlist);
 }
 
 #[enum_dispatch::enum_dispatch(Evaluator)]
@@ -350,6 +351,32 @@ impl Evaluator for ModuleEvaluator {
         }
         Some(module.instances[inst_id].name.clone())
     }
+    fn debug_state(&self, state: &EvaluatorState, netlist: &Netlist) {
+        let state = state.module();
+        eprintln!(
+            "module id: {}, ginst_id: {} (",
+            self.module_id, self.ginst_id
+        );
+        eprintln!("wires:");
+        for (id, wire) in state.wire_states.iter_enumerated() {
+            eprintln!("\twire {:?}: {:?}", id, wire);
+        }
+        eprintln!("instances:");
+        for ((i_eval, i_state), i_ids) in self
+            .instance_evaluators
+            .iter()
+            .zip(state.instance_states.iter())
+            .zip(self.inst_ids.iter())
+        {
+            if i_eval.is_some() && i_state.is_some() {
+                i_eval
+                    .as_ref()
+                    .unwrap()
+                    .debug_state(i_state.as_ref().unwrap(), netlist);
+            }
+        }
+        eprintln!(")");
+    }
 }
 
 impl Evaluator for GateEvaluator {
@@ -389,8 +416,9 @@ impl Evaluator for GateEvaluator {
         sim_state: Option<&mut GlobSimulationState>,
         _netlist: &Netlist,
     ) -> WireState {
+        //eprintln!("Eval gate_inst_id {:?})", self.inst_id);
         let state = state.gate_mut();
-        match self.gate {
+        let res = match self.gate {
             Gate::CombUnitary(ugate) => {
                 let op = state.inputs[0].as_ref().unwrap();
                 match ugate {
@@ -415,16 +443,27 @@ impl Evaluator for GateEvaluator {
                 super::simulation::sim_mux(op0, op1, ops, sim_state, self.inst_id)
             }
             Gate::Dff => {
-                if let Some(wire_state) = state.inputs[1].as_ref() {
-                    if let Some(sim_state) = sim_state {
-                        sim_state.store_random(wire_state);
-                    }
-                }
                 // TODO: only stop glitches for some specifically-marked gates?
                 state.prev_inputs[1]
                     .clone()
                     .unwrap_or(WireState::control())
                     .stop_glitches()
+            }
+        };
+        //eprintln!("done Eval gate_inst_id {:?})", self.inst_id);
+        res
+    }
+    fn eval_finish(
+        &self,
+        state: &mut EvaluatorState,
+        sim_state: Option<&mut GlobSimulationState>,
+        _netlist: &Netlist,
+    ) {
+        let state = state.gate_mut();
+        if self.gate == Gate::Dff {
+            let wire_state = state.inputs[1].as_ref().unwrap();
+            if let Some(sim_state) = sim_state {
+                sim_state.store_random(wire_state);
             }
         }
     }
@@ -478,6 +517,14 @@ impl Evaluator for GateEvaluator {
         }
         Ok(())
     }
+    fn debug_state(&self, state: &EvaluatorState, netlist: &Netlist) {
+        eprintln!(
+            "gate {:?}, inst_id: {:?}, state: {:?}",
+            self.gate,
+            self.inst_id,
+            state.gate()
+        );
+    }
 }
 
 impl Evaluator for TieEvaluator {
@@ -504,6 +551,9 @@ impl Evaluator for TieEvaluator {
         _netlist: &Netlist,
     ) -> WireState {
         WireState::control().with_value(Some(self.value))
+    }
+    fn debug_state(&self, state: &EvaluatorState, netlist: &Netlist) {
+        eprintln!("Tie {:?}", self.value);
     }
 }
 
@@ -780,6 +830,16 @@ impl Evaluator for PipelineGadgetEvaluator {
     fn glob_inst2path(&self, ginst: GlobInstId, netlist: &Netlist) -> Option<String> {
         self.module_evaluator.glob_inst2path(ginst, netlist)
     }
+    fn debug_state(&self, state: &EvaluatorState, netlist: &Netlist) {
+        let state = state.pipeline_gadget();
+        eprintln!(
+            "Pipeline gadget, module {:?}, inputs: {:?}, output_states: {:?}",
+            self.module_id, state.inputs, state.output_states
+        );
+        eprintln!("module state:");
+        self.module_evaluator
+            .debug_state(&EvaluatorState::Module(state.module_state.clone()), netlist);
+    }
 }
 
 impl ModuleEvaluator {
@@ -901,7 +961,7 @@ impl ModuleEvaluator {
         /*
         eprintln!(
             "eval wire {:?} ({:?}) in module {}",
-            wire, module.wire_names[*wire], module.name
+            wire, module.wire_names[wire], module.name
         );
         */
         let (src_inst_id, src_con) = module.wires[wire].source;
@@ -1270,6 +1330,10 @@ impl InstanceEvaluator {
         match architecture {
             InstanceType::Gate(gate) => {
                 let inst_id = used_ids.new_inst();
+                eprintln!(
+                    "new gate {:?}, g_inst_id: {:?}, instance_path: {:?}",
+                    gate, inst_id, instance_path
+                );
                 Some(InstanceEvaluator::Gate(GateEvaluator {
                     gate: *gate,
                     inst_id,
