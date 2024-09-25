@@ -15,6 +15,16 @@
 //     - can also be pre-calculated
 //     - for the pre-calculation: iterate over wires, and eval them using the DfsPostOrder
 //
+// safety checking:
+// at the top-level, this is handled by `check_safe_finish` on modules,
+// which checks all wires of the module (`check_wire`), then `check_safe_finish` on all
+// instances.
+// `check_wire` performs:
+// - a `check_safe_out` on the source instance of the wire
+// - a `check_fanout` on the wire, which itself runs `check_safe_input` on all instances in the
+// wire's fanout.
+// Actual checking is done in `check_safe_out` for gates, and `check_safe_input` for pipeline
+// gadgets.
 use super::gadget::{Latency, LatencyVec, PortRole};
 use super::module::gates::{CombUnitary, Gate};
 use super::module::{
@@ -474,6 +484,13 @@ impl Evaluator for GateEvaluator {
         _sim_state: &mut GlobSimulationState,
         _netlist: &Netlist,
     ) -> Result<()> {
+        //eprintln!("check safe out gate {:?}", self);
+        if self.gate == Gate::Dff {
+            // For a Dff, the output is a one-cycle delayed version of its input.
+            // We can assume that the safety of the input was checked.
+            return Ok(());
+        }
+        // We check that the output of the gate is safe by checking its input properties.
         let state = state.gate();
         let sensitive_current = state.inputs.iter().fold(ShareSet::empty(), |x, y| {
             x.union(y.as_ref().unwrap().sensitivity)
@@ -691,6 +708,7 @@ impl Evaluator for PipelineGadgetEvaluator {
         _sim_state: &mut GlobSimulationState,
         netlist: &Netlist,
     ) -> Result<()> {
+        // Check that all used randomness is fresh.
         let module = netlist.module(self.module_id);
         let gadget = netlist.gadget(self.module_id).unwrap();
         let state = state.pipeline_gadget_mut();
@@ -1355,6 +1373,7 @@ impl InstanceEvaluator {
                     instance_path,
                 ))),
             },
+            // TODO: Create an evaluator for this, in order to check security.
             InstanceType::Input(..) => None,
             InstanceType::Tie(value) => {
                 Some(InstanceEvaluator::Tie(TieEvaluator { value: *value }))
