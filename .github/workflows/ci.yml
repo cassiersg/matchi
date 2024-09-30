@@ -17,7 +17,7 @@ jobs:
           name: build
           path: matchi/target/release/matchi
   release:
-    needs: [build_latex]
+    needs: [build]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
