@@ -181,6 +181,7 @@ impl Simulator {
                 vec![],
                 &mut EvalInstanceIds::new(),
                 vec![],
+                false,
             ),
             vcd_states,
             input_vcd_ids,

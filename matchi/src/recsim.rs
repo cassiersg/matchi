@@ -734,7 +734,9 @@ impl Evaluator for PipelineGadgetEvaluator {
         netlist: &Netlist,
     ) -> WireState {
         let state = state.pipeline_gadget_mut();
-        let gadget = netlist.gadget(self.module_id).unwrap();
+        let gadget = netlist
+            .gadget(self.module_id)
+            .expect("Pipeline gadget inside pipeline gadget");
         let module = netlist.module(self.module_id);
         let out_lat = gadget.latency[module.output_ports[out]];
         if out_lat == Latency::from_raw(0) {
@@ -867,6 +869,7 @@ impl ModuleEvaluator {
         queries: Vec<OutputId>,
         used_ids: &mut EvalInstanceIds,
         instance_path: Vec<String>,
+        inside_gadget: bool,
     ) -> Self {
         let module = netlist.module(module_id);
         let wg = &netlist.module_comb_deps(module_id).comb_wire_dag;
@@ -934,6 +937,7 @@ impl ModuleEvaluator {
                     netlist,
                     &mut inst_id_range,
                     path,
+                    inside_gadget,
                 );
                 used_ids.copy_end(&inst_id_range);
                 /*
@@ -1258,6 +1262,7 @@ impl PipelineGadgetEvaluator {
                 queries,
                 used_ids,
                 instance_path,
+                true, // we are inside a gadget now
             ),
         }
     }
@@ -1344,6 +1349,9 @@ impl InstanceEvaluator {
         netlist: &Netlist,
         used_ids: &mut EvalInstanceIds,
         instance_path: Vec<String>,
+        // Are we creating an instrance inside a pipeline gadget? If so, don't create new pipeline
+        // gadgets.
+        inside_gadget: bool,
     ) -> Option<Self> {
         match architecture {
             InstanceType::Gate(gate) => {
@@ -1358,19 +1366,22 @@ impl InstanceEvaluator {
                 }))
             }
             InstanceType::Module(submodule_id) => match netlist.gadget(*submodule_id) {
-                Some(_gadget) => Some(InstanceEvaluator::Gadget(PipelineGadgetEvaluator::new(
+                Some(_gadget) if !inside_gadget => {
+                    Some(InstanceEvaluator::Gadget(PipelineGadgetEvaluator::new(
+                        *submodule_id,
+                        netlist,
+                        queries,
+                        used_ids,
+                        instance_path,
+                    )))
+                }
+                _ => Some(InstanceEvaluator::Module(ModuleEvaluator::new(
                     *submodule_id,
                     netlist,
                     queries,
                     used_ids,
                     instance_path,
-                ))),
-                None => Some(InstanceEvaluator::Module(ModuleEvaluator::new(
-                    *submodule_id,
-                    netlist,
-                    queries,
-                    used_ids,
-                    instance_path,
+                    inside_gadget,
                 ))),
             },
             // TODO: Create an evaluator for this, in order to check security.
